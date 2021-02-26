@@ -4,7 +4,7 @@
 	"description": "A wrapper for SQS Lambda Consumers",
 	"main": "lib/index.js",
 	"scripts": {
-		"test": "export TEST_ENV=true; mocha --exit -R nyan --recursive tests/",
+		"test": "export TEST_ENV=true; mocha --exit -R nyan --require tests/bootstrap.js --recursive tests/",
 		"watch-test": "export TEST_ENV=true; mocha --exit -R nyan -w --recursive tests/",
 		"coverage-ci": "nyc --reporter=lcov --reporter=text-summary mocha --exit --recursive tests/",
 		"coverage": "nyc npm test",
@@ -36,5 +36,9 @@
 		"nyc": "^15.1.0",
 		"sinon": "^9.2.1",
 		"typescript": "^4.1.3"
+	},
+	"dependencies": {
+		"@janiscommerce/superstruct": "^1.1.1",
+		"lllog": "^1.1.2"
 	}
 }

@@ -1,7 +1,7 @@
 {
 	"name": "@janiscommerce/sqs-consumer",
 	"version": "0.1.0",
-	"description": "A wrapper for SQS Lambda Consumers",
+	"description": "A wrapper for SQS Consumers and Lambda",
 	"main": "lib/index.js",
 	"scripts": {
 		"test": "export TEST_ENV=true; mocha --exit -R nyan --require tests/bootstrap.js --recursive tests/",

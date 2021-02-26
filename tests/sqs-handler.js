@@ -23,11 +23,18 @@ class BatchConsumer extends SQSConsumer {
 	}
 }
 
+class ConditionalConsumer extends SQSConsumer {
+	handlesBatch(eventData) {
+		return eventData.Records.length > 1;
+	}
+}
+
 describe('SQS Handler', () => {
 
 	beforeEach(() => {
 		sinon.stub(SQSConsumer.prototype, 'processBatch');
 		sinon.stub(SQSConsumer.prototype, 'processSingleRecord');
+		sinon.spy(ConditionalConsumer.prototype, 'handlesBatch');
 	});
 
 	afterEach(() => sinon.restore());
@@ -65,6 +72,11 @@ describe('SQS Handler', () => {
 					[Symbol.for('logger')]: sinon.match(logger => logger instanceof LogTransport)
 				}
 			]);
+		});
+
+		it('Should pass the event to the handlesBatch method of the consumer', async () => {
+			await SQSHandler.handle(ConditionalConsumer, event);
+			sinon.assert.calledOnceWithExactly(ConditionalConsumer.prototype.handlesBatch, event);
 		});
 
 	});

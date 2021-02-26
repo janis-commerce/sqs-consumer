@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+## [0.1.1] - 2021-02-26
+### Fixed
+- SQS Event struct is now a partial, including eventSourceARN and receiptHandle
+- Typo in README
+
 ## [0.1.0] - 2021-02-26
 ### Added
 - IterativeSQSConsumer, BatchSQSConsumer, SQSConsumer and SQSHandler

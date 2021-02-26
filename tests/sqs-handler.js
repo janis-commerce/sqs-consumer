@@ -8,10 +8,14 @@ const event = {
 	Records: [
 		{
 			messageId: '5dea9fc691240d00084083f8',
+			receiptHandle: 'receipt handle',
+			eventSourceARN: 'arn:aws:sqs:us-east-1:000000000000:FakeQueue',
 			body: JSON.stringify({ name: 'Foo' })
 		},
 		{
 			messageId: '5dea9fc691240d00084083f9',
+			receiptHandle: 'receipt handle',
+			eventSourceARN: 'arn:aws:sqs:us-east-1:000000000000:FakeQueue',
 			body: JSON.stringify({ name: 'Bar' })
 		}
 	]
@@ -48,10 +52,14 @@ describe('SQS Handler', () => {
 			sinon.assert.calledTwice(SQSConsumer.prototype.processSingleRecord);
 			sinon.assert.calledWithExactly(SQSConsumer.prototype.processSingleRecord.getCall(0), {
 				messageId: '5dea9fc691240d00084083f8',
+				receiptHandle: 'receipt handle',
+				eventSourceARN: 'arn:aws:sqs:us-east-1:000000000000:FakeQueue',
 				body: { name: 'Foo' }
 			}, sinon.match(logger => logger instanceof LogTransport));
 			sinon.assert.calledWithExactly(SQSConsumer.prototype.processSingleRecord.getCall(1), {
 				messageId: '5dea9fc691240d00084083f9',
+				receiptHandle: 'receipt handle',
+				eventSourceARN: 'arn:aws:sqs:us-east-1:000000000000:FakeQueue',
 				body: { name: 'Bar' }
 			}, sinon.match(logger => logger instanceof LogTransport));
 		});
@@ -63,11 +71,15 @@ describe('SQS Handler', () => {
 			sinon.assert.calledOnceWithExactly(BatchConsumer.prototype.processBatch, [
 				{
 					messageId: '5dea9fc691240d00084083f8',
+					receiptHandle: 'receipt handle',
+					eventSourceARN: 'arn:aws:sqs:us-east-1:000000000000:FakeQueue',
 					body: { name: 'Foo' },
 					[Symbol.for('logger')]: sinon.match(logger => logger instanceof LogTransport)
 				},
 				{
 					messageId: '5dea9fc691240d00084083f9',
+					receiptHandle: 'receipt handle',
+					eventSourceARN: 'arn:aws:sqs:us-east-1:000000000000:FakeQueue',
 					body: { name: 'Bar' },
 					[Symbol.for('logger')]: sinon.match(logger => logger instanceof LogTransport)
 				}

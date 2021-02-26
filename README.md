@@ -1,4 +1,4 @@
-# Sqs Consumer
+# SQS Consumer
 
 ![Build Status](https://github.com/janis-commerce/sqs-consumer/workflows/Build%20Status/badge.svg)
 [![Coverage Status](https://coveralls.io/repos/github/janis-commerce/sqs-consumer/badge.svg?branch=master)](https://coveralls.io/github/janis-commerce/sqs-consumer?branch=master)

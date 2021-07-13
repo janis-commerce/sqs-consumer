@@ -1,5 +1,6 @@
 'use strict';
 
+const { ApiSession } = require('@janiscommerce/api-session');
 const assert = require('assert');
 const { SQSConsumer } = require('../lib');
 const LogTransport = require('../lib/log-transport');
@@ -29,6 +30,18 @@ describe('SQS Consumer', () => {
 			assert.doesNotReject(myConsumer.processSingleRecord({
 				id: '5dea9fc691240d00084083f8'
 			}, new LogTransport('myPrefix')));
+		});
+	});
+
+	describe('setSession', () => {
+		it('Should set a session in consumer correctly', async () => {
+			const myConsumer = new SQSConsumer();
+			const clientCode = 'clientTest';
+
+			myConsumer.setSession({ clientCode });
+
+			assert(myConsumer.session instanceof ApiSession);
+			assert(myConsumer.session.clientCode === clientCode);
 		});
 	});
 

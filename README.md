@@ -148,7 +148,7 @@ module.exports.handler = event => SQSHandler.handle(MyIterativeConsumer, event);
 ### Validate with Struct (Optional)
 
 When you declare a struct, before any process, all records are validated and only continue if pass the validation, this validations should return a valid [struct](https://www.npmjs.com/package/superstruct).
-You must declare a get struct() in you class.
+You must declare a get struct() in your class.
 ```js
 const { struct } = require('@janiscommerce/superstruct');
 ...

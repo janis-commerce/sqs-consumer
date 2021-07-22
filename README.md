@@ -144,3 +144,23 @@ class MyIterativeConsumer extends IterativeSQSConsumer {
 
 module.exports.handler = event => SQSHandler.handle(MyIterativeConsumer, event);
 ```
+
+### Validate with Struct (Optional)
+
+When you declare a struct, before any process, all records are validated and only continue if pass the validation, this validations should return a valid [struct](https://www.npmjs.com/package/superstruct).
+You must declare a get struct() in you class.
+```js
+const { struct } = require('@janiscommerce/superstruct');
+...
+get struct() {
+	return struct.partial({
+		name: 'string'
+	});
+}
+```
+
+### Session injection
+
+This package implements [API Session](https://www.npmjs.com/package/@janiscommerce/api-session). In order to associate a request to a session, the record should be contain the property `janis-client` in the `messageAttributes`.
+
+Session details and customization details can be found in api-session README.

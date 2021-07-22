@@ -249,7 +249,7 @@ describe('SQS Handler', () => {
 			sinon.assert.calledOnceWithExactly(ConditionalConsumer.prototype.setSession, { clientCode: 'fizzmodarg' });
 		});
 
-		it('Should pass the event by the consumer with the sessions are setted', async () => {
+		it('Should pass the event to the consumer with the session set for each of them', async () => {
 			sinon.spy(ConditionalConsumer.prototype, 'setSession');
 			await SQSHandler.handle(ConditionalConsumer, eventWithMultipleClients);
 			sinon.assert.calledTwice(ConditionalConsumer.prototype.setSession);
@@ -257,25 +257,26 @@ describe('SQS Handler', () => {
 			sinon.assert.calledWithExactly(ConditionalConsumer.prototype.setSession.getCall(1), { clientCode: 'test' });
 		});
 
-		it('Should pass the event by the consumer with the sessions are setted and omit the session for the record without client', async () => {
-			sinon.spy(ConditionalConsumer.prototype, 'setSession');
-			await SQSHandler.handle(ConditionalConsumer, eventWithMultipleClientsAndWithoutClient);
-			sinon.assert.calledTwice(ConditionalConsumer.prototype.setSession);
-			sinon.assert.calledWithExactly(ConditionalConsumer.prototype.setSession.getCall(0), { clientCode: 'fizzmodarg' });
-			sinon.assert.calledWithExactly(ConditionalConsumer.prototype.setSession.getCall(1), { clientCode: 'test' });
-		});
+		it('Should pass the event to the consumer with the sessions set only for the records with janis-client and omitted for the records without it',
+			async () => {
+				sinon.spy(ConditionalConsumer.prototype, 'setSession');
+				await SQSHandler.handle(ConditionalConsumer, eventWithMultipleClientsAndWithoutClient);
+				sinon.assert.calledTwice(ConditionalConsumer.prototype.setSession);
+				sinon.assert.calledWithExactly(ConditionalConsumer.prototype.setSession.getCall(0), { clientCode: 'fizzmodarg' });
+				sinon.assert.calledWithExactly(ConditionalConsumer.prototype.setSession.getCall(1), { clientCode: 'test' });
+			});
 
-		it('Should process if the structure body in the records are correct', async () => {
+		it('Should process if the body structure in the records are valid', async () => {
 			await assert.doesNotReject(SQSHandler.handle(ConditionalConsumerWithStruct, eventWithoutClient));
 			await assert.doesNotReject(SQSHandler.handle(ConditionalConsumerWithArrayStruct, eventWithoutClient));
 		});
 
-		it('Should throw error if the structure body in the records are not correct for a batch', async () => {
+		it('Should reject if the body structure of the records are invalid when processing a batch', async () => {
 			await assert.rejects(SQSHandler.handle(ConditionalConsumerWithStruct, eventBatchWithIncorrectBody));
 			sinon.assert.notCalled(ConditionalConsumerWithStruct.prototype.processBatch);
 		});
 
-		it('Should throw error if the structure body in the records are not correct at processing one by one', async () => {
+		it('Should reject if the body structure of the records are invalid when processing one by one', async () => {
 			await assert.rejects(SQSHandler.handle(ConditionalConsumerWithStruct, eventSingleWithIncorrectBody));
 			sinon.assert.notCalled(ConditionalConsumerWithStruct.prototype.processSingleRecord);
 		});

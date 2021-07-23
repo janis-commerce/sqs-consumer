@@ -243,7 +243,7 @@ describe('SQS Handler', () => {
 			sinon.assert.calledOnceWithExactly(ConditionalConsumer.prototype.handlesBatch, eventWithoutClient);
 		});
 
-		it('Should pass the event by the consumer with the session is setted', async () => {
+		it('Should pass the event to the consumer with the session is setted', async () => {
 			sinon.spy(ConditionalConsumer.prototype, 'setSession');
 			await SQSHandler.handle(ConditionalConsumer, eventWithOneClient);
 			sinon.assert.calledOnceWithExactly(ConditionalConsumer.prototype.setSession, { clientCode: 'fizzmodarg' });

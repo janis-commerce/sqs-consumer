@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+## [0.3.0] - 2022-12-21
+### Added
+- After each execution will emit the event `janiscommerce.ended` using `@janiscommerce/events`
+
 ## [0.2.0] - 2021-07-23
 ### Added
 - Support for `struct` validation

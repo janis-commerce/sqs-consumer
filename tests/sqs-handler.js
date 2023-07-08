@@ -1,3 +1,5 @@
+/* eslint-disable max-classes-per-file */
+
 'use strict';
 
 const sinon = require('sinon');
@@ -6,7 +8,6 @@ const { struct } = require('@janiscommerce/superstruct');
 const Events = require('@janiscommerce/events');
 const { SQSHandler, SQSConsumer } = require('../lib');
 const LogTransport = require('../lib/log-transport');
-
 
 const eventWithoutClient = {
 	Records: [
@@ -186,7 +187,6 @@ class ConditionalConsumerWithArrayStruct extends ConditionalConsumer {
 	}
 }
 
-
 describe('SQS Handler', () => {
 
 	beforeEach(() => {
@@ -294,6 +294,43 @@ describe('SQS Handler', () => {
 			await assert.rejects(SQSHandler.handle(ConditionalConsumerWithStruct, eventSingleWithIncorrectBody));
 			sinon.assert.notCalled(ConditionalConsumerWithStruct.prototype.processSingleRecord);
 			sinon.assert.notCalled(Events.emit);
+		});
+
+		// https://docs.aws.amazon.com/lambda/latest/dg/with-sqs.html#services-sqs-batchfailurereporting
+		describe('Partial failure reporting', () => {
+
+			it('Should not return partial failure reporting if no failed messages are set', async () => {
+
+				class NoReportConsumer extends BatchConsumer {
+					handlesBatch() {
+						return true;
+					}
+				}
+
+				const response = await SQSHandler.handle(NoReportConsumer, eventWithOneClient);
+
+				assert.deepStrictEqual(response, undefined);
+			});
+
+			it('Should return the partial failure reporting if at least one failed message is set', async () => {
+
+				class NoReportConsumer extends BatchConsumer {
+					processBatch(records) {
+						this.addFailedMessage(records[0].messageId);
+					}
+				}
+
+				const response = await SQSHandler.handle(NoReportConsumer, eventWithOneClient);
+
+				assert.deepStrictEqual(response, {
+					batchItemFailures: [
+						{
+							itemIdentifier: eventWithOneClient.Records[0].messageId
+						}
+					]
+				});
+			});
+
 		});
 	});
 

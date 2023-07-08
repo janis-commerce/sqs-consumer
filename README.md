@@ -54,6 +54,12 @@ logger.info('Some info message');
 
 Logging levels follow [lllog](https://www.npmjs.com/package/lllog) levels.
 
+### Partial failure reporting
+
+To implement [Partial failure reporting](https://docs.aws.amazon.com/lambda/latest/dg/with-sqs.html#services-sqs-batchfailurereporting), you should add each message ID that fails using the method `addFailedMessage(messageId)`.
+
+The lambda will automatically return the failed messages formatted as expected.
+
 ## :zap: Usage with serverless (lambda)
 
 This package also exports a `SQSHandler` to easily integrate with AWS Lambda.

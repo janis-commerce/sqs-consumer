@@ -31,6 +31,7 @@ module.exports = {
 		'prefer-template': 0,
 		'import/no-unresolved': 0,
 		'import/no-extraneous-dependencies': ['error', { devDependencies: ['**/tests/**/*.js'] }],
+		strict: ['error', 'global'],
 
 		'no-bitwise': 0,
 

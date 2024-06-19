@@ -6,6 +6,7 @@ const sinon = require('sinon');
 const assert = require('assert');
 const { struct } = require('@janiscommerce/superstruct');
 const Events = require('@janiscommerce/events');
+const Log = require('@janiscommerce/log');
 const { SQSHandler, SQSConsumer } = require('../lib');
 const LogTransport = require('../lib/log-transport');
 
@@ -194,6 +195,7 @@ describe('SQS Handler', () => {
 		sinon.stub(SQSConsumer.prototype, 'processSingleRecord');
 		sinon.spy(ConditionalConsumer.prototype, 'handlesBatch');
 		sinon.stub(Events, 'emit');
+		sinon.stub(Log, 'start');
 	});
 
 	afterEach(() => sinon.restore());
@@ -219,6 +221,7 @@ describe('SQS Handler', () => {
 			}, sinon.match(logger => logger instanceof LogTransport));
 
 			sinon.assert.calledOnceWithExactly(Events.emit, 'janiscommerce.ended');
+			sinon.assert.calledOnceWithExactly(Log.start);
 		});
 
 		it('Should call the processBatch with all records if consumer handles batches', async () => {
@@ -243,12 +246,14 @@ describe('SQS Handler', () => {
 			]);
 
 			sinon.assert.calledOnceWithExactly(Events.emit, 'janiscommerce.ended');
+			sinon.assert.calledOnceWithExactly(Log.start);
 		});
 
 		it('Should pass the event to the handlesBatch method of the consumer', async () => {
 			await SQSHandler.handle(ConditionalConsumer, eventWithoutClient);
 			sinon.assert.calledOnceWithExactly(ConditionalConsumer.prototype.handlesBatch, eventWithoutClient);
 			sinon.assert.calledOnceWithExactly(Events.emit, 'janiscommerce.ended');
+			sinon.assert.calledOnceWithExactly(Log.start);
 		});
 
 		it('Should pass the event to the consumer with the session is setted', async () => {
@@ -256,6 +261,7 @@ describe('SQS Handler', () => {
 			await SQSHandler.handle(ConditionalConsumer, eventWithOneClient);
 			sinon.assert.calledOnceWithExactly(ConditionalConsumer.prototype.setSession, { clientCode: 'fizzmodarg' });
 			sinon.assert.calledOnceWithExactly(Events.emit, 'janiscommerce.ended');
+			sinon.assert.calledOnceWithExactly(Log.start);
 		});
 
 		it('Should pass the event to the consumer with the session set for each of them', async () => {
@@ -265,6 +271,7 @@ describe('SQS Handler', () => {
 			sinon.assert.calledWithExactly(ConditionalConsumer.prototype.setSession.getCall(0), { clientCode: 'fizzmodarg' });
 			sinon.assert.calledWithExactly(ConditionalConsumer.prototype.setSession.getCall(1), { clientCode: 'test' });
 			sinon.assert.calledOnceWithExactly(Events.emit, 'janiscommerce.ended');
+			sinon.assert.calledOnceWithExactly(Log.start);
 		});
 
 		it('Should pass the event to the consumer with the sessions set only for the records with janis-client and omitted for the records without it',
@@ -275,6 +282,7 @@ describe('SQS Handler', () => {
 				sinon.assert.calledWithExactly(ConditionalConsumer.prototype.setSession.getCall(0), { clientCode: 'fizzmodarg' });
 				sinon.assert.calledWithExactly(ConditionalConsumer.prototype.setSession.getCall(1), { clientCode: 'test' });
 				sinon.assert.calledOnceWithExactly(Events.emit, 'janiscommerce.ended');
+				sinon.assert.calledOnceWithExactly(Log.start);
 			});
 
 		it('Should process if the body structure in the records are valid', async () => {
@@ -282,18 +290,22 @@ describe('SQS Handler', () => {
 			await assert.doesNotReject(SQSHandler.handle(ConditionalConsumerWithArrayStruct, eventWithoutClient));
 			sinon.assert.calledTwice(Events.emit);
 			sinon.assert.alwaysCalledWithExactly(Events.emit, 'janiscommerce.ended');
+			sinon.assert.calledTwice(Log.start);
+			sinon.assert.alwaysCalledWithExactly(Log.start);
 		});
 
 		it('Should reject if the body structure of the records are invalid when processing a batch', async () => {
 			await assert.rejects(SQSHandler.handle(ConditionalConsumerWithStruct, eventBatchWithIncorrectBody));
 			sinon.assert.notCalled(ConditionalConsumerWithStruct.prototype.processBatch);
-			sinon.assert.notCalled(Events.emit);
+			sinon.assert.calledOnceWithExactly(Events.emit, 'janiscommerce.ended');
+			sinon.assert.calledOnceWithExactly(Log.start);
 		});
 
 		it('Should reject if the body structure of the records are invalid when processing one by one', async () => {
 			await assert.rejects(SQSHandler.handle(ConditionalConsumerWithStruct, eventSingleWithIncorrectBody));
 			sinon.assert.notCalled(ConditionalConsumerWithStruct.prototype.processSingleRecord);
-			sinon.assert.notCalled(Events.emit);
+			sinon.assert.calledOnceWithExactly(Events.emit, 'janiscommerce.ended');
+			sinon.assert.calledOnceWithExactly(Log.start);
 		});
 
 		// https://docs.aws.amazon.com/lambda/latest/dg/with-sqs.html#services-sqs-batchfailurereporting

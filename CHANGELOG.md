@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+## [0.4.1] - 2024-06-19
+### Fixed
+- Calling `Log.start()` when `handle()` is called to ensure end Trace Layer Extension
+- Emit `janiscommerce.ended` when record/s are invalid by struct
+
 ## [0.4.0] - 2023-07-08
 ### Added
 - Partial failure reporting feature

@@ -4,11 +4,21 @@
 
 const sinon = require('sinon');
 const assert = require('assert');
+
 const { struct } = require('@janiscommerce/superstruct');
 const Events = require('@janiscommerce/events');
 const Log = require('@janiscommerce/log');
-const { SQSHandler, SQSConsumer } = require('../lib');
+
+const { mockClient } = require('aws-sdk-client-mock');
+const { S3Client, GetObjectCommand } = require('@aws-sdk/client-s3');
+const { SSMClient, GetParameterCommand } = require('@aws-sdk/client-ssm');
+const { RAMClient, ListResourcesCommand } = require('@aws-sdk/client-ram');
+const { STSClient, AssumeRoleCommand } = require('@aws-sdk/client-sts');
+
+const { SQSHandler, SQSConsumer, SQSHandlerError } = require('../lib');
 const LogTransport = require('../lib/log-transport');
+
+const ParameterStore = require('../lib/helpers/parameter-store');
 
 const eventWithoutClient = {
 	Records: [
@@ -190,7 +200,40 @@ class ConditionalConsumerWithArrayStruct extends ConditionalConsumer {
 
 describe('SQS Handler', () => {
 
+	let ramMock;
+	let ssmMock;
+	let s3Mock;
+	let stsMock;
+
+	const parameterName = '/shared/internal-storage';
+	const parameterNameStoreArn = `arn:aws:ssm:us-east-1:123456789012:parameter/${parameterName}`;
+	const contentS3Path = 'sqsContent/defaultClient/service-name/MySQSName/2025/03/06/123.json';
+
+	const credentials = {
+		AccessKeyId: 'accessKeyIdTest',
+		SecretAccessKey: 'secretAccessKeyTest',
+		SessionToken: 'sessionTokenTest'
+	};
+
+	const buckets = [
+		{
+			bucketName: 'sample-bucket-name-us-east-1',
+			roleArn: 'arn:aws:iam::1234567890:role/defaultRoleName',
+			region: 'us-east-1',
+			default: true
+		},
+		{
+			bucketName: 'sample-bucket-name-us-west-1',
+			roleArn: 'arn:aws:iam::1234567890:role/defaultRoleName',
+			region: 'us-west-1'
+		}
+	];
+
 	beforeEach(() => {
+		ramMock = mockClient(RAMClient);
+		ssmMock = mockClient(SSMClient);
+		s3Mock = mockClient(S3Client);
+		stsMock = mockClient(STSClient);
 		sinon.stub(SQSConsumer.prototype, 'processBatch');
 		sinon.stub(SQSConsumer.prototype, 'processSingleRecord');
 		sinon.spy(ConditionalConsumer.prototype, 'handlesBatch');
@@ -198,7 +241,42 @@ describe('SQS Handler', () => {
 		sinon.stub(Log, 'start');
 	});
 
-	afterEach(() => sinon.restore());
+	afterEach(() => {
+		ssmMock.restore();
+		ramMock.restore();
+		s3Mock.restore();
+		stsMock.restore();
+		ParameterStore.clearCache();
+		sinon.restore();
+	});
+
+	const assertRamListResourceCommand = (callsNumber = 1) => {
+		assert.deepStrictEqual(ramMock.commandCalls(ListResourcesCommand, {
+			resourceOwner: 'OTHER-ACCOUNTS'
+		}, true).length, callsNumber);
+	};
+
+	const assertSsmGetParameterCommand = (callsNumber = 1) => {
+		assert.deepStrictEqual(ssmMock.commandCalls(GetParameterCommand, {
+			Name: parameterNameStoreArn,
+			WithDecryption: true
+		}, true).length, callsNumber);
+	};
+
+	const assertStsAssumeRoleCommand = (callsNumber = 1) => {
+		assert.deepStrictEqual(stsMock.commandCalls(AssumeRoleCommand, {
+			RoleArn: buckets[0].roleArn,
+			RoleSessionName: process.env.JANIS_SERVICE_NAME,
+			DurationSeconds: 1800
+		}, true).length, callsNumber);
+	};
+
+	const assertS3GetObjectCommand = (callsNumber = 1, bucketName = buckets[0].bucketName) => {
+		assert.deepStrictEqual(s3Mock.commandCalls(GetObjectCommand, {
+			Bucket: bucketName,
+			Key: contentS3Path
+		}, true).length, callsNumber);
+	};
 
 	describe('handle', () => {
 
@@ -224,6 +302,55 @@ describe('SQS Handler', () => {
 			sinon.assert.calledOnceWithExactly(Log.start);
 		});
 
+		it('Should call the processSingleRecord for a record (with content S3 path)', async () => {
+
+			ramMock.on(ListResourcesCommand).resolves({
+				resources: [{ arn: parameterNameStoreArn }]
+			});
+
+			ssmMock.on(GetParameterCommand).resolves({
+				Parameter: {
+					Value: JSON.stringify(buckets)
+				}
+			});
+
+			stsMock.on(AssumeRoleCommand).resolves({
+				Credentials: credentials
+			});
+
+			s3Mock.on(GetObjectCommand).resolves({
+				Body: {
+					name: 'Foo',
+					otherData: 'some-data'
+				}
+			});
+
+			await SQSHandler.handle(SQSConsumer, {
+				Records: [{
+					messageId: '5dea9fc691240d00084083f8',
+					receiptHandle: 'receipt handle',
+					eventSourceARN: 'arn:aws:sqs:us-east-1:000000000000:FakeQueue',
+					body: JSON.stringify({ name: 'Foo', contentS3Path })
+				}]
+			});
+
+			sinon.assert.notCalled(SQSConsumer.prototype.processBatch);
+			sinon.assert.calledWithExactly(SQSConsumer.prototype.processSingleRecord, {
+				messageId: '5dea9fc691240d00084083f8',
+				receiptHandle: 'receipt handle',
+				eventSourceARN: 'arn:aws:sqs:us-east-1:000000000000:FakeQueue',
+				body: { name: 'Foo', otherData: 'some-data' }
+			}, sinon.match(logger => logger instanceof LogTransport));
+
+			sinon.assert.calledOnceWithExactly(Events.emit, 'janiscommerce.ended');
+			sinon.assert.calledOnceWithExactly(Log.start);
+
+			assertRamListResourceCommand();
+			assertSsmGetParameterCommand();
+			assertStsAssumeRoleCommand();
+			assertS3GetObjectCommand();
+		});
+
 		it('Should call the processBatch with all records if consumer handles batches', async () => {
 			await SQSHandler.handle(BatchConsumer, eventWithoutClient);
 
@@ -247,6 +374,73 @@ describe('SQS Handler', () => {
 
 			sinon.assert.calledOnceWithExactly(Events.emit, 'janiscommerce.ended');
 			sinon.assert.calledOnceWithExactly(Log.start);
+		});
+
+		it('Should call the processBatch with all records if consumer handles batches (one record with content S3 path)', async () => {
+
+			ramMock.on(ListResourcesCommand).resolves({
+				resources: [{ arn: parameterNameStoreArn }]
+			});
+
+			ssmMock.on(GetParameterCommand).resolves({
+				Parameter: {
+					Value: JSON.stringify(buckets)
+				}
+			});
+
+			stsMock.on(AssumeRoleCommand).resolves({
+				Credentials: credentials
+			});
+
+			s3Mock.on(GetObjectCommand).resolves({
+				Body: {
+					name: 'Foo',
+					otherData: 'some-data'
+				}
+			});
+
+			await SQSHandler.handle(BatchConsumer, {
+				Records: [
+					{
+						messageId: '5dea9fc691240d00084083f8',
+						receiptHandle: 'receipt handle',
+						eventSourceARN: 'arn:aws:sqs:us-east-1:000000000000:FakeQueue',
+						body: JSON.stringify({ name: 'Foo', contentS3Path })
+					},
+					{
+						messageId: '5dea9fc691240d00084083f9',
+						receiptHandle: 'receipt handle',
+						eventSourceARN: 'arn:aws:sqs:us-east-1:000000000000:FakeQueue',
+						body: JSON.stringify({ name: 'Bar' })
+					}
+				]
+			});
+
+			sinon.assert.notCalled(BatchConsumer.prototype.processSingleRecord);
+			sinon.assert.calledOnceWithExactly(BatchConsumer.prototype.processBatch, [
+				{
+					messageId: '5dea9fc691240d00084083f8',
+					receiptHandle: 'receipt handle',
+					eventSourceARN: 'arn:aws:sqs:us-east-1:000000000000:FakeQueue',
+					body: { name: 'Foo', otherData: 'some-data' },
+					[Symbol.for('logger')]: sinon.match(logger => logger instanceof LogTransport)
+				},
+				{
+					messageId: '5dea9fc691240d00084083f9',
+					receiptHandle: 'receipt handle',
+					eventSourceARN: 'arn:aws:sqs:us-east-1:000000000000:FakeQueue',
+					body: { name: 'Bar' },
+					[Symbol.for('logger')]: sinon.match(logger => logger instanceof LogTransport)
+				}
+			]);
+
+			sinon.assert.calledOnceWithExactly(Events.emit, 'janiscommerce.ended');
+			sinon.assert.calledOnceWithExactly(Log.start);
+
+			assertRamListResourceCommand();
+			assertSsmGetParameterCommand();
+			assertStsAssumeRoleCommand();
+			assertS3GetObjectCommand();
 		});
 
 		it('Should pass the event to the handlesBatch method of the consumer', async () => {
@@ -294,7 +488,7 @@ describe('SQS Handler', () => {
 			sinon.assert.alwaysCalledWithExactly(Log.start);
 		});
 
-		it.skip('Should reject if the body structure of the records are invalid when processing a batch', async () => {
+		it('Should reject if the body structure of the records are invalid when processing a batch', async () => {
 			await assert.rejects(SQSHandler.handle(ConditionalConsumerWithStruct, eventBatchWithIncorrectBody));
 			sinon.assert.notCalled(ConditionalConsumerWithStruct.prototype.processBatch);
 			sinon.assert.calledOnceWithExactly(Events.emit, 'janiscommerce.ended');
@@ -306,6 +500,161 @@ describe('SQS Handler', () => {
 			sinon.assert.notCalled(ConditionalConsumerWithStruct.prototype.processSingleRecord);
 			sinon.assert.calledOnceWithExactly(Events.emit, 'janiscommerce.ended');
 			sinon.assert.calledOnceWithExactly(Log.start);
+		});
+
+		it('Should reject when an error occurs while getting the parameter ARN from RAM of AWS', async () => {
+
+			ramMock.on(ListResourcesCommand).rejects(new Error('Resource Access Manager Error: some-error-message', SQSHandlerError.codes.RAM_ERROR));
+
+			await assert.rejects(SQSHandler.handle(SQSConsumer, {
+				Records: [{
+					messageId: '5dea9fc691240d00084083f8',
+					receiptHandle: 'receipt handle',
+					eventSourceARN: 'arn:aws:sqs:us-east-1:000000000000:FakeQueue',
+					body: JSON.stringify({ name: 'Foo', contentS3Path })
+				}]
+			}));
+
+			sinon.assert.notCalled(SQSConsumer.prototype.processSingleRecord);
+			sinon.assert.calledOnceWithExactly(Events.emit, 'janiscommerce.ended');
+			sinon.assert.calledOnceWithExactly(Log.start);
+
+			assertRamListResourceCommand();
+
+			assertSsmGetParameterCommand(0);
+			assertStsAssumeRoleCommand(0);
+			assertS3GetObjectCommand(0);
+		});
+
+		it('Should reject when an error occurs while getting the parameter ARN from RAM of AWS (missing parameter name in ARN)', async () => {
+
+			ramMock.on(ListResourcesCommand).resolves({
+				resources: [{ arn: 'some-other-parameter-name' }]
+			});
+
+			await assert.rejects(SQSHandler.handle(SQSConsumer, {
+				Records: [{
+					messageId: '5dea9fc691240d00084083f8',
+					receiptHandle: 'receipt handle',
+					eventSourceARN: 'arn:aws:sqs:us-east-1:000000000000:FakeQueue',
+					body: JSON.stringify({ name: 'Foo', contentS3Path })
+				}]
+			}), `Unable to find resources with parameter ${parameterName} in the ARN`);
+
+			sinon.assert.notCalled(SQSConsumer.prototype.processSingleRecord);
+			sinon.assert.calledOnceWithExactly(Events.emit, 'janiscommerce.ended');
+			sinon.assert.calledOnceWithExactly(Log.start);
+
+			assertRamListResourceCommand();
+
+			assertSsmGetParameterCommand(0);
+			assertStsAssumeRoleCommand(0);
+			assertS3GetObjectCommand(0);
+		});
+
+		it('Should reject when an error occurs while getting the parameter command from SSM of AWS', async () => {
+
+			ramMock.on(ListResourcesCommand).resolves({
+				resources: [{ arn: parameterNameStoreArn }]
+			});
+
+			ssmMock.on(GetParameterCommand).rejects(
+				new Error(`Unable to get parameter with arn ${parameterNameStoreArn} - some-error-message`, SQSHandlerError.codes.SSM_ERROR)
+			);
+
+			await assert.rejects(SQSHandler.handle(SQSConsumer, {
+				Records: [{
+					messageId: '5dea9fc691240d00084083f8',
+					receiptHandle: 'receipt handle',
+					eventSourceARN: 'arn:aws:sqs:us-east-1:000000000000:FakeQueue',
+					body: JSON.stringify({ name: 'Foo', contentS3Path })
+				}]
+			}));
+
+			sinon.assert.notCalled(SQSConsumer.prototype.processSingleRecord);
+			sinon.assert.calledOnceWithExactly(Events.emit, 'janiscommerce.ended');
+			sinon.assert.calledOnceWithExactly(Log.start);
+
+			assertRamListResourceCommand();
+			assertSsmGetParameterCommand();
+
+			assertStsAssumeRoleCommand(0);
+			assertS3GetObjectCommand(0);
+		});
+
+		it('Should reject when an error occurs while getting the assume role from STS of AWS', async () => {
+
+			ramMock.on(ListResourcesCommand).resolves({
+				resources: [{ arn: parameterNameStoreArn }]
+			});
+
+			ssmMock.on(GetParameterCommand).resolves({
+				Parameter: {
+					Value: JSON.stringify(buckets)
+				}
+			});
+
+			stsMock.on(AssumeRoleCommand).rejects(
+				new Error(`Error while trying to assume role arn ${buckets[0].roleArn}: some-error-message`, SQSHandlerError.codes.ASSUME_ROLE_ERROR)
+			);
+
+			await assert.rejects(SQSHandler.handle(SQSConsumer, {
+				Records: [{
+					messageId: '5dea9fc691240d00084083f8',
+					receiptHandle: 'receipt handle',
+					eventSourceARN: 'arn:aws:sqs:us-east-1:000000000000:FakeQueue',
+					body: JSON.stringify({ name: 'Foo', contentS3Path })
+				}]
+			}));
+
+			sinon.assert.notCalled(SQSConsumer.prototype.processSingleRecord);
+			sinon.assert.calledOnceWithExactly(Events.emit, 'janiscommerce.ended');
+			sinon.assert.calledOnceWithExactly(Log.start);
+
+			assertRamListResourceCommand();
+			assertSsmGetParameterCommand();
+			assertStsAssumeRoleCommand(2);
+
+			assertS3GetObjectCommand(0);
+		});
+
+		it('Should reject when an error occurs while getting body content from S3 buckets of AWS', async () => {
+
+			ramMock.on(ListResourcesCommand).resolves({
+				resources: [{ arn: parameterNameStoreArn }]
+			});
+
+			ssmMock.on(GetParameterCommand).resolves({
+				Parameter: {
+					Value: JSON.stringify(buckets)
+				}
+			});
+
+			stsMock.on(AssumeRoleCommand).resolves({
+				Credentials: credentials
+			});
+
+			s3Mock.on(GetObjectCommand).rejects(
+				new Error('Failed to download from both default and provisional buckets', SQSHandlerError.codes.S3_ERROR)
+			);
+
+			await assert.rejects(SQSHandler.handle(SQSConsumer, {
+				Records: [{
+					messageId: '5dea9fc691240d00084083f8',
+					receiptHandle: 'receipt handle',
+					eventSourceARN: 'arn:aws:sqs:us-east-1:000000000000:FakeQueue',
+					body: JSON.stringify({ name: 'Foo', contentS3Path })
+				}]
+			}));
+
+			sinon.assert.notCalled(SQSConsumer.prototype.processSingleRecord);
+			sinon.assert.calledOnceWithExactly(Events.emit, 'janiscommerce.ended');
+			sinon.assert.calledOnceWithExactly(Log.start);
+
+			assertRamListResourceCommand();
+			assertSsmGetParameterCommand();
+			assertStsAssumeRoleCommand(2);
+			assertS3GetObjectCommand();
 		});
 
 		// https://docs.aws.amazon.com/lambda/latest/dg/with-sqs.html#services-sqs-batchfailurereporting

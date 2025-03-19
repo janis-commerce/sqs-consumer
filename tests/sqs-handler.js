@@ -9,6 +9,8 @@ const { struct } = require('@janiscommerce/superstruct');
 const Events = require('@janiscommerce/events');
 const Log = require('@janiscommerce/log');
 
+const { Readable } = require('stream');
+
 const { mockClient } = require('aws-sdk-client-mock');
 const { S3Client, GetObjectCommand } = require('@aws-sdk/client-s3');
 const { SSMClient, GetParameterCommand } = require('@aws-sdk/client-ssm');
@@ -304,6 +306,15 @@ describe('SQS Handler', () => {
 
 		it('Should call the processSingleRecord for a record (with content S3 path)', async () => {
 
+			const bodyContent = JSON.stringify({ name: 'Foo', otherData: 'some-data' });
+
+			const bodyStream = new Readable({
+				read() {
+					this.push(bodyContent);
+					this.push(null);
+				}
+			});
+
 			ramMock.on(ListResourcesCommand).resolves({
 				resources: [{ arn: parameterNameStoreArn }]
 			});
@@ -319,10 +330,7 @@ describe('SQS Handler', () => {
 			});
 
 			s3Mock.on(GetObjectCommand).resolves({
-				Body: {
-					name: 'Foo',
-					otherData: 'some-data'
-				}
+				Body: bodyStream
 			});
 
 			await SQSHandler.handle(SQSConsumer, {
@@ -349,6 +357,74 @@ describe('SQS Handler', () => {
 			assertSsmGetParameterCommand();
 			assertStsAssumeRoleCommand();
 			assertS3GetObjectCommand();
+		});
+
+		it('Should call the processSingleRecord for a record (with content S3 path and provisional bucket)', async () => {
+
+			const bodyContent = JSON.stringify({ name: 'Foo', otherData: 'some-data' });
+
+			const bodyStream = new Readable({
+				read() {
+					this.push(bodyContent);
+					this.push(null);
+				}
+			});
+
+			ramMock.on(ListResourcesCommand).resolves({
+				resources: [{ arn: parameterNameStoreArn }]
+			});
+
+			ssmMock.on(GetParameterCommand).resolves({
+				Parameter: {
+					Value: JSON.stringify(buckets)
+				}
+			});
+
+			stsMock.on(AssumeRoleCommand).resolves({
+				Credentials: credentials
+			});
+
+			s3Mock.on(GetObjectCommand).resolves({
+				Body: bodyStream
+			});
+
+			s3Mock
+				.on(GetObjectCommand, {
+					Bucket: buckets[0].bucketName, Key: contentS3Path // defaultBucket
+				})
+				.rejects(new Error('Default bucket failed'))
+				.on(GetObjectCommand, {
+					Bucket: buckets[1].bucketName, Key: contentS3Path // provisionalBucket
+				})
+				.resolves({
+					Body: bodyStream
+				});
+
+			await SQSHandler.handle(SQSConsumer, {
+				Records: [{
+					messageId: '5dea9fc691240d00084083f8',
+					receiptHandle: 'receipt handle',
+					eventSourceARN: 'arn:aws:sqs:us-east-1:000000000000:FakeQueue',
+					body: JSON.stringify({ name: 'Foo', contentS3Path })
+				}]
+			});
+
+			sinon.assert.notCalled(SQSConsumer.prototype.processBatch);
+			sinon.assert.calledWithExactly(SQSConsumer.prototype.processSingleRecord, {
+				messageId: '5dea9fc691240d00084083f8',
+				receiptHandle: 'receipt handle',
+				eventSourceARN: 'arn:aws:sqs:us-east-1:000000000000:FakeQueue',
+				body: { name: 'Foo', otherData: 'some-data' }
+			}, sinon.match(logger => logger instanceof LogTransport));
+
+			sinon.assert.calledOnceWithExactly(Events.emit, 'janiscommerce.ended');
+			sinon.assert.calledOnceWithExactly(Log.start);
+
+			assertRamListResourceCommand();
+			assertSsmGetParameterCommand();
+			assertStsAssumeRoleCommand(2);
+			assertS3GetObjectCommand(1, buckets[0].bucketName); // defaultBucket
+			assertS3GetObjectCommand(1, buckets[1].bucketName); // provisionalBucket
 		});
 
 		it('Should call the processBatch with all records if consumer handles batches', async () => {
@@ -378,6 +454,15 @@ describe('SQS Handler', () => {
 
 		it('Should call the processBatch with all records if consumer handles batches (one record with content S3 path)', async () => {
 
+			const bodyContent = JSON.stringify({ name: 'Foo', otherData: 'some-data' });
+
+			const bodyStream = new Readable({
+				read() {
+					this.push(bodyContent);
+					this.push(null);
+				}
+			});
+
 			ramMock.on(ListResourcesCommand).resolves({
 				resources: [{ arn: parameterNameStoreArn }]
 			});
@@ -393,10 +478,7 @@ describe('SQS Handler', () => {
 			});
 
 			s3Mock.on(GetObjectCommand).resolves({
-				Body: {
-					name: 'Foo',
-					otherData: 'some-data'
-				}
+				Body: bodyStream
 			});
 
 			await SQSHandler.handle(BatchConsumer, {

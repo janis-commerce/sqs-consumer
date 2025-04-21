@@ -4,10 +4,15 @@
 
 const sinon = require('sinon');
 const assert = require('assert');
+
 const { struct } = require('@janiscommerce/superstruct');
 const Events = require('@janiscommerce/events');
 const Log = require('@janiscommerce/log');
-const { SQSHandler, SQSConsumer } = require('../lib');
+
+const { mockClient } = require('aws-sdk-client-mock');
+const { S3Client, GetObjectCommand } = require('@aws-sdk/client-s3');
+
+const { SQSHandler, SQSConsumer, SQSHandlerError } = require('../lib');
 const LogTransport = require('../lib/log-transport');
 
 const eventWithoutClient = {
@@ -190,7 +195,16 @@ class ConditionalConsumerWithArrayStruct extends ConditionalConsumer {
 
 describe('SQS Handler', () => {
 
+	let s3Mock;
+
+	const contentS3Location = {
+		bucketName: 'sample-bucket-name-us-east-1',
+		region: 'us-east-1',
+		path: 'sqsContent/defaultClient/service-name/MySQSName/2025/03/06/123.json'
+	};
+
 	beforeEach(() => {
+		s3Mock = mockClient(S3Client);
 		sinon.stub(SQSConsumer.prototype, 'processBatch');
 		sinon.stub(SQSConsumer.prototype, 'processSingleRecord');
 		sinon.spy(ConditionalConsumer.prototype, 'handlesBatch');
@@ -198,7 +212,17 @@ describe('SQS Handler', () => {
 		sinon.stub(Log, 'start');
 	});
 
-	afterEach(() => sinon.restore());
+	afterEach(() => {
+		s3Mock.restore();
+		sinon.restore();
+	});
+
+	const assertS3GetObjectCommand = (callsNumber = 1) => {
+		assert.deepStrictEqual(s3Mock.commandCalls(GetObjectCommand, {
+			Bucket: contentS3Location.bucketName,
+			Key: contentS3Location.path
+		}, true).length, callsNumber);
+	};
 
 	describe('handle', () => {
 
@@ -224,6 +248,39 @@ describe('SQS Handler', () => {
 			sinon.assert.calledOnceWithExactly(Log.start);
 		});
 
+		it('Should call the processSingleRecord for a record (with content S3 path)', async () => {
+
+			const bodyContent = JSON.stringify({ name: 'Foo', otherData: 'some-data' });
+
+			s3Mock.on(GetObjectCommand).resolves({
+				Body: {
+					transformToString: () => Promise.resolve(bodyContent)
+				}
+			});
+
+			await SQSHandler.handle(SQSConsumer, {
+				Records: [{
+					messageId: '5dea9fc691240d00084083f8',
+					receiptHandle: 'receipt handle',
+					eventSourceARN: 'arn:aws:sqs:us-east-1:000000000000:FakeQueue',
+					body: JSON.stringify({ name: 'Foo', contentS3Location })
+				}]
+			});
+
+			sinon.assert.notCalled(SQSConsumer.prototype.processBatch);
+			sinon.assert.calledWithExactly(SQSConsumer.prototype.processSingleRecord, {
+				messageId: '5dea9fc691240d00084083f8',
+				receiptHandle: 'receipt handle',
+				eventSourceARN: 'arn:aws:sqs:us-east-1:000000000000:FakeQueue',
+				body: { name: 'Foo', otherData: 'some-data' }
+			}, sinon.match(logger => logger instanceof LogTransport));
+
+			sinon.assert.calledOnceWithExactly(Events.emit, 'janiscommerce.ended');
+			sinon.assert.calledOnceWithExactly(Log.start);
+
+			assertS3GetObjectCommand();
+		});
+
 		it('Should call the processBatch with all records if consumer handles batches', async () => {
 			await SQSHandler.handle(BatchConsumer, eventWithoutClient);
 
@@ -247,6 +304,57 @@ describe('SQS Handler', () => {
 
 			sinon.assert.calledOnceWithExactly(Events.emit, 'janiscommerce.ended');
 			sinon.assert.calledOnceWithExactly(Log.start);
+		});
+
+		it('Should call the processBatch with all records if consumer handles batches (one record with content S3 path)', async () => {
+
+			const bodyContent = JSON.stringify({ name: 'Foo', otherData: 'some-data' });
+
+			s3Mock.on(GetObjectCommand).resolves({
+				Body: {
+					transformToString: () => Promise.resolve(bodyContent)
+				}
+			});
+
+			await SQSHandler.handle(BatchConsumer, {
+				Records: [
+					{
+						messageId: '5dea9fc691240d00084083f8',
+						receiptHandle: 'receipt handle',
+						eventSourceARN: 'arn:aws:sqs:us-east-1:000000000000:FakeQueue',
+						body: JSON.stringify({ name: 'Foo', contentS3Location })
+					},
+					{
+						messageId: '5dea9fc691240d00084083f9',
+						receiptHandle: 'receipt handle',
+						eventSourceARN: 'arn:aws:sqs:us-east-1:000000000000:FakeQueue',
+						body: JSON.stringify({ name: 'Bar' })
+					}
+				]
+			});
+
+			sinon.assert.notCalled(BatchConsumer.prototype.processSingleRecord);
+			sinon.assert.calledOnceWithExactly(BatchConsumer.prototype.processBatch, [
+				{
+					messageId: '5dea9fc691240d00084083f8',
+					receiptHandle: 'receipt handle',
+					eventSourceARN: 'arn:aws:sqs:us-east-1:000000000000:FakeQueue',
+					body: { name: 'Foo', otherData: 'some-data' },
+					[Symbol.for('logger')]: sinon.match(logger => logger instanceof LogTransport)
+				},
+				{
+					messageId: '5dea9fc691240d00084083f9',
+					receiptHandle: 'receipt handle',
+					eventSourceARN: 'arn:aws:sqs:us-east-1:000000000000:FakeQueue',
+					body: { name: 'Bar' },
+					[Symbol.for('logger')]: sinon.match(logger => logger instanceof LogTransport)
+				}
+			]);
+
+			sinon.assert.calledOnceWithExactly(Events.emit, 'janiscommerce.ended');
+			sinon.assert.calledOnceWithExactly(Log.start);
+
+			assertS3GetObjectCommand();
 		});
 
 		it('Should pass the event to the handlesBatch method of the consumer', async () => {
@@ -306,6 +414,28 @@ describe('SQS Handler', () => {
 			sinon.assert.notCalled(ConditionalConsumerWithStruct.prototype.processSingleRecord);
 			sinon.assert.calledOnceWithExactly(Events.emit, 'janiscommerce.ended');
 			sinon.assert.calledOnceWithExactly(Log.start);
+		});
+
+		it('Should reject when an error occurs while getting body content from S3 bucket of AWS', async () => {
+
+			s3Mock.on(GetObjectCommand).rejects(
+				new Error('Failed to download from bucket', SQSHandlerError.codes.S3_ERROR)
+			);
+
+			await assert.rejects(SQSHandler.handle(SQSConsumer, {
+				Records: [{
+					messageId: '5dea9fc691240d00084083f8',
+					receiptHandle: 'receipt handle',
+					eventSourceARN: 'arn:aws:sqs:us-east-1:000000000000:FakeQueue',
+					body: JSON.stringify({ name: 'Foo', contentS3Location })
+				}]
+			}));
+
+			sinon.assert.notCalled(SQSConsumer.prototype.processSingleRecord);
+			sinon.assert.calledOnceWithExactly(Events.emit, 'janiscommerce.ended');
+			sinon.assert.calledOnceWithExactly(Log.start);
+
+			assertS3GetObjectCommand();
 		});
 
 		// https://docs.aws.amazon.com/lambda/latest/dg/with-sqs.html#services-sqs-batchfailurereporting

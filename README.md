@@ -26,6 +26,8 @@ For this consumer, you have to implement the `processBatch` method. The method s
 processBatch(records: Array<ParsedSQSRecordWithLogger>): Promise<void> | void
 ```
 
+When processing each record, if the body received contains the property `contentS3Path`, the consumer will download from the S3 bucket the complete body and assign it to the parsed record to return.
+
 To add a log message for a record, you can use the built-in logger like this:
 
 ```js
@@ -45,6 +47,8 @@ For this consumer, you have to implement the `processSingleRecord` method. The m
 ```js
 processSingleRecord(record: ParsedSQSRecord, logger: LogTransport): Promise<void> | void
 ```
+
+When processing the single record, if the body received contains the property `contentS3Path`, the consumer will download from the S3 bucket the complete body and assign it to the parsed record to return.
 
 To add a log message for a record, you can use the logger passed as argument like this:
 

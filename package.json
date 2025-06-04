@@ -1,6 +1,6 @@
 {
 	"name": "@janiscommerce/sqs-consumer",
-	"version": "0.4.1",
+	"version": "1.0.0",
 	"description": "A wrapper for SQS Consumers and Lambda",
 	"main": "lib/index.js",
 	"scripts": {

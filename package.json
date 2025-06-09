@@ -45,6 +45,7 @@
 		"@janiscommerce/events": "^0.2.0",
 		"@janiscommerce/log": "^5.1.1",
 		"@janiscommerce/superstruct": "^1.2.2",
+		"aws-xray-sdk-core": "^3.10.3",
 		"lllog": "^1.1.2"
 	}
 }

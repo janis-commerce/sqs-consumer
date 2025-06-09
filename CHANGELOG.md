@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+## [1.1.0] - 2025-06-09
+### Added
+- **AWS X-Ray** support
+
 ## [1.0.0] - 2025-06-01
 ### Added
 - Support for handling SQS messages exceeding 256KB limit through S3 download

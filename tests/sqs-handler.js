@@ -226,6 +226,22 @@ describe('SQS Handler', () => {
 
 	describe('handle', () => {
 
+		it('Should set the AWS_LAMBDA_REQUEST_ID env var with the context awsRequestId', async () => {
+
+			await SQSHandler.handle(SQSConsumer, eventWithoutClient, { awsRequestId: 'test-request-id' });
+
+			assert.strictEqual(process.env.AWS_LAMBDA_REQUEST_ID, 'test-request-id');
+		});
+
+		it('Should set the AWS_LAMBDA_REQUEST_ID env var as empty if no context is received', async () => {
+
+			process.env.AWS_LAMBDA_REQUEST_ID = 'stale-request-id';
+
+			await SQSHandler.handle(SQSConsumer, eventWithoutClient);
+
+			assert.strictEqual(process.env.AWS_LAMBDA_REQUEST_ID, '');
+		});
+
 		it('Should call the processSingleRecord for each record if consumer does not handle batches', async () => {
 			await SQSHandler.handle(SQSConsumer, eventWithoutClient);
 

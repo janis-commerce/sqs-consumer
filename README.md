@@ -77,7 +77,7 @@ This package also exports a `SQSHandler` to easily integrate with AWS Lambda.
 Usage is as easy as it can be, just export the following in your lambda:
 
 ```js
-module.exports.handler = event => SQSHandler.handle(MySQSConsumer, event);
+module.exports.handler = (event, context) => SQSHandler.handle(MySQSConsumer, event, context);
 ```
 
 ## :warning: Advanced usage
@@ -131,7 +131,7 @@ class MyBatchConsumer extends BatchSQSConsumer {
 	}
 }
 
-module.exports.handler = event => SQSHandler.handle(MyBatchConsumer, event);
+module.exports.handler = (event, context) => SQSHandler.handle(MyBatchConsumer, event, context);
 ```
 
 ### Lambda Iterative consumer
@@ -158,7 +158,7 @@ class MyIterativeConsumer extends IterativeSQSConsumer {
 	}
 }
 
-module.exports.handler = event => SQSHandler.handle(MyIterativeConsumer, event);
+module.exports.handler = (event, context) => SQSHandler.handle(MyIterativeConsumer, event, context);
 ```
 
 ### Validate with Struct (Optional)
@@ -184,7 +184,7 @@ class MyConsumer extends IterativeSQSConsumer {
 
 }
 
-module.exports.handler = event => SQSHandler.handle(MyConsumer, event);
+module.exports.handler = (event, context) => SQSHandler.handle(MyConsumer, event, context);
 ```
 
 ### Session injection

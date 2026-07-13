@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+- `SQSHandler.handle()` now receives the AWS Lambda context as third argument and sets the `AWS_LAMBDA_REQUEST_ID` env var with the `awsRequestId` on every invocation
 
 ## [1.1.0] - 2025-06-09
 ### Added

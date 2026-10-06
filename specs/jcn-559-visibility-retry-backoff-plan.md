@@ -48,14 +48,14 @@ Depende de: Batch 3b.
 - [x] `lib/index.js` exporta `RetryBackoff` desde la ubicación nueva. API pública sin cambios.
 - [x] Tests reorganizados por archivo; coverage 100 %.
 
-## Batch 5 — review de código 2 (usuario)
+## Batch 5 ✅ (ad67daa) — review de código 2 (usuario)
 
 Depende de: Batch 4.
 
-- [ ] `RetryBackoffConfig`: `true` → defaults.
-- [ ] `lib/helpers/queue-arn.js` (`QueueArn.parse`), fuera de `VisibilityChanger`.
-- [ ] `VisibilityChanger`: un recorrido para chunks + entries; tandas de 10 chunks concurrentes; corte tras AccessDenied.
-- [ ] `RetryBackoff.planChanges`: un recorrido de `failedMessages`, sin `Map` ni plan mutado; `buildSummary` en un recorrido.
+- [x] `RetryBackoffConfig`: `true` → defaults.
+- [x] `lib/helpers/queue-arn.js` (`QueueArn.parse`), fuera de `VisibilityChanger`.
+- [x] `VisibilityChanger`: un recorrido para chunks + entries; tandas de 10 chunks concurrentes; corte tras AccessDenied.
+- [x] `RetryBackoff.planChanges`: un recorrido de `failedMessages`, sin `Map` ni plan mutado; `buildSummary` en un recorrido.
 
 ## Pendiente de release
 

@@ -4,23 +4,23 @@
 
 Orden entre repos: plugin primero (el release del plugin va antes que `sqs-consumer`). Los batches de `sqs-consumer` no dependen del código del plugin.
 
-## Batch 1 — plugin: permiso `sqs:ChangeMessageVisibility` (`sls-helper-plugin-janis`)
+## Batch 1 ✅ (5af29c7) — plugin: permiso `sqs:ChangeMessageVisibility` (`sls-helper-plugin-janis`)
 
-- [ ] `lib/sqs-helper/index.js` — sumar `sqs:ChangeMessageVisibility` a `sqsPermissions`.
-- [ ] `tests/unit/hook-builder/sqs.js` (y cualquier otro test que asserte la lista) — actualizar.
-- [ ] `README.md` — los 3 bloques que listan los permisos.
+- [x] `lib/sqs-helper/index.js` — sumar `sqs:ChangeMessageVisibility` a `sqsPermissions`.
+- [x] `tests/unit/hook-builder/sqs.js` (y cualquier otro test que asserte la lista) — actualizar.
+- [x] `README.md` — los 3 bloques que listan los permisos.
 - Verifica: `npm run lint` + `npm test` verdes.
 
-## Batch 2 — sqs-consumer: helper `lib/helpers/retry-backoff.js`
+## Batch 2 ✅ (915d653) — sqs-consumer: helper `lib/helpers/retry-backoff.js`
 
 Depende de: nada.
 
-- [ ] Dependencia `@aws-sdk/client-sqs` (`package.json` + lock).
-- [ ] Normalización/validación de config (defaults 60/900/0.2; inválida → `null` + motivo).
-- [ ] `getAttempt(record)`, `getRetryDelaySeconds(attempt, config, minDelaySeconds)`.
-- [ ] Queue URL desde ARN, detección FIFO, chunking de a 10 por cola, `ChangeMessageVisibilityBatch` en paralelo, cliente por región con X-Ray.
-- [ ] Clasificación de fallos: entry `Failed`, error de llamada, `AccessDenied`/`AccessDeniedException`.
-- [ ] `tests/helpers/retry-backoff.js`.
+- [x] Dependencia `@aws-sdk/client-sqs` (`package.json` + lock).
+- [x] Normalización/validación de config (defaults 60/900/0.2; inválida → `null` + motivo).
+- [x] `getAttempt(record)`, `getRetryDelaySeconds(attempt, config, minDelaySeconds)`.
+- [x] Queue URL desde ARN, detección FIFO, chunking de a 10 por cola, `ChangeMessageVisibilityBatch` en paralelo, cliente por región con X-Ray.
+- [x] Clasificación de fallos: entry `Failed`, error de llamada, `AccessDenied`/`AccessDeniedException`.
+- [x] `tests/helpers/retry-backoff.js`.
 - Verifica: lint + tests, coverage del helper 100 %.
 
 ## Batch 3 — sqs-consumer: integración en el handler + docs

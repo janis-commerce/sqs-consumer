@@ -70,6 +70,56 @@ To implement [Partial failure reporting](https://docs.aws.amazon.com/lambda/late
 
 The lambda will automatically return the failed messages formatted as expected.
 
+### Retry backoff
+
+By default, a failed message returns to the queue after the fixed visibility timeout of the queue. To delay each retry with an exponential backoff and jitter, define the `retryBackoff` getter in your consumer:
+
+```js
+class MyConsumer extends BatchSQSConsumer {
+
+	get retryBackoff() {
+		return { baseDelaySeconds: 60, maxDelaySeconds: 900, jitterRatio: 0.2 };
+	}
+
+	async processBatch(records) {
+		// ...
+		this.addFailedMessage(record.messageId);
+	}
+}
+```
+
+Every field is optional and the getter can return `{}`. The default values are the ones of the example. If the getter is not defined, the backoff is disabled and nothing changes.
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `baseDelaySeconds` | `60` | Delay of the first retry. Must be greater than 0 and not greater than `maxDelaySeconds` |
+| `maxDelaySeconds` | `900` | Maximum delay. Must not be greater than `43200` (12 hours) |
+| `jitterRatio` | `0.2` | Random variation of the delay (±). Must be in the range `[0, 1)` |
+
+The delay in seconds of each failed message is calculated as follows:
+
+```
+delay = min(maxDelaySeconds, max(minDelaySeconds, round(baseDelaySeconds × 2^(attempt − 1) × jitter)))
+```
+
+- `attempt` is the `ApproximateReceiveCount` of the message (the first receive is `1`).
+- `jitter` is a random factor between `1 - jitterRatio` and `1 + jitterRatio`.
+- `minDelaySeconds` is optional (default `0`) and is set with `addFailedMessage(messageId, { minDelaySeconds })`. If the same message is added more than once, the last `minDelaySeconds` is used.
+
+```js
+this.addFailedMessage(record.messageId, { minDelaySeconds: 120 });
+```
+
+The backoff is applied at the end of the invocation, only to the messages reported with `addFailedMessage()`, and only if the consumer finished without throwing. The failed messages are always returned in `batchItemFailures`, even if their visibility could not be changed (a warning is logged). A summary of the backoff of each invocation is logged.
+
+- **FIFO queues are not supported:** the visibility of their messages is not changed and a warning is logged once per container.
+- **Invalid config:** an error is logged once per container and the backoff is disabled.
+- **Access denied:** an error is logged once per container and the backoff is disabled in that container.
+
+#### Permissions
+
+The lambda needs the `sqs:ChangeMessageVisibility` permission on the queue it consumes. It is granted by default by `sls-helper-plugin-janis >= 11.6.0`. With an older version, add an `iamStatement` with that action.
+
 ## :zap: Usage with serverless (lambda)
 
 This package also exports a `SQSHandler` to easily integrate with AWS Lambda.

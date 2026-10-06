@@ -18,7 +18,9 @@ Los consumers pueden activar un backoff exponencial con jitter para los mensajes
 
 ✅ Incluye:
 - Getter opt-in `retryBackoff` en el consumer: `{ baseDelaySeconds, maxDelaySeconds, jitterRatio }`.
-- `addFailedMessage(messageId, { minDelaySeconds })`: segundo parámetro opcional en `SQSConsumer` y `SQSHandler`. Sigue siendo sync.
+- `addFailedMessage(messageId, { minDelaySeconds, delaySeconds })`: segundo parámetro opcional en `SQSConsumer` y `SQSHandler`. Sigue siendo sync.
+- `delaySeconds`: delay exacto precalculado por el consumer. Reemplaza la fórmula y el piso; solo se le aplica el tope `maxDelaySeconds`.
+- Export público `RetryBackoff` en `lib/index.js` con `getAttempt(record)` y `getRetryDelaySeconds(attempt, config, minDelaySeconds)`. `config` acepta la misma forma que el getter y completa defaults. Permite que magento-pricing precalcule el delay, lo guarde (`nextRetryDate`) y lo pase con `delaySeconds`.
 - Cálculo del delay: `base × 2^(attempt − 1)`, jitter ±`jitterRatio`, piso `minDelaySeconds`, tope `maxDelaySeconds` aplicado al final. Resultado entero. `attempt` = `ApproximateReceiveCount` (inválido o ausente = 1).
 - Aplicación al final de `handle()`, después de `janiscommerce.ended` y antes de devolver `batchItemFailures`. `ChangeMessageVisibilityBatch` en chunks de 10 por cola, en paralelo. Queue URL derivada del `eventSourceARN`. Cliente SQS por región del ARN, con X-Ray como en `S3Downloader`.
 - Detección de `AccessDenied` (error de la llamada o `Code` de una entry): un `logger.error` por container y backoff deshabilitado en ese container.
@@ -52,6 +54,8 @@ Los consumers pueden activar un backoff exponencial con jitter para los mensajes
 - [ ] Cola FIFO → sin llamada a SQS y un warn.
 - [ ] Si el handler tira, no hay llamada a SQS.
 - [ ] Modo single: solo los mensajes de `addFailedMessage()` reciben backoff.
+- [ ] `addFailedMessage(id, { delaySeconds })` → `VisibilityTimeout` = `delaySeconds` topeado en `maxDelaySeconds`, sin jitter.
+- [ ] `require('@janiscommerce/sqs-consumer').RetryBackoff.getRetryDelaySeconds(attempt, { baseDelaySeconds: 300 })` devuelve el mismo cálculo que usa el handler.
 - [ ] Log de resumen por invocación con backoff aplicado.
 - [ ] `sls-helper-plugin-janis` incluye `sqs:ChangeMessageVisibility` en `sqsPermissions`, con test.
 - [ ] README de los dos packages actualizado. Tipos de `sqs-consumer` regenerados.
@@ -63,6 +67,7 @@ Los consumers pueden activar un backoff exponencial con jitter para los mensajes
 - `lib/helpers/retry-backoff.js` (nuevo) — config, cálculo de delay, chunking por cola, `ChangeMessageVisibilityBatch`, estado por container (AccessDenied, FIFO warn).
 - `lib/sqs-handler.js` (edit) — lee el getter, guarda `minDelaySeconds` por failed, aplica el backoff al final de `handle()`.
 - `lib/sqs-consumer.js` (edit) — `addFailedMessage(messageId, options)`.
+- `lib/index.js` (edit) — export `RetryBackoff`.
 - `tests/helpers/retry-backoff.js` (nuevo), `tests/sqs-handler.js` (edit).
 - `types/**` (regenerado), `package.json` + `package-lock.json` (dep), `README.md`.
 
@@ -74,11 +79,14 @@ Los consumers pueden activar un backoff exponencial con jitter para los mensajes
 
 - Del ticket: opt-in por getter (minor), sin detección de último intento, nunca rechaza por fallas de visibility, FIFO no soportado, release plugin → sqs-consumer.
 - Campos faltantes del getter toman default: `baseDelaySeconds: 60`, `maxDelaySeconds: 900`, `jitterRatio: 0.2` (valores de vtex-pricing). El getter puede devolver `{}`.
-- Config inválida (no numérica, `base <= 0`, `base > max`, `max > 43200`, `jitterRatio` fuera de `[0, 1)`) → `error` una vez por container y backoff deshabilitado. No tira: un error de config no debe reprocesar el batch entero.
+- Config inválida (no numérica, `base <= 0`, `base > max`, `max > 42300`, `jitterRatio` fuera de `[0, 1)`) → `error` una vez por container y backoff deshabilitado. No tira: un error de config no debe reprocesar el batch entero.
 - `messageId` failed que no está en `event.Records` → queda failed, sin visibility, cuenta como fallo en el log de resumen.
-- `addFailedMessage` repetido para el mismo `messageId` → gana el último `minDelaySeconds` y el mensaje recibe un solo cambio de visibility. `batchItemFailures` no cambia respecto de hoy.
+- Review (opción a): magento-pricing guarda el delay en el doc antes de publicar. El package acepta el delay exacto y expone los helpers puros para que magento borre su copia. vtex-pricing debe re-llamar `addFailedMessage` al final para refrescar el piso del rate limit (gana el último): va al ticket de migración.
+- `addFailedMessage` repetido para el mismo `messageId` → gana el último `minDelaySeconds`/`delaySeconds` y el mensaje recibe un solo cambio de visibility. `batchItemFailures` no cambia respecto de hoy.
 - `AccessDenied` se detecta por `error.name`/`Code` `AccessDenied` o `AccessDeniedException` (el SDK v3 sobre protocolo JSON puede devolver cualquiera).
 - El backoff corre después de `janiscommerce.ended`: los logs del consumer ya están emitidos y la latencia extra no afecta su flush.
+
+- Review: `undefined`, `null` y `false` en el getter apagan el backoff sin log. `max` se valida contra 42300 (12 h − 15 min de Lambda): SQS cuenta las 12 h desde la recepción. Todo delay (fórmula o `delaySeconds`) queda en `[1, max]`. `@aws-sdk/client-sqs` se carga lazy. `RetryBackoff` es una clase con métodos estáticos (standard de packages). `handle()` envuelve el backoff en try/catch.
 
 ## Abiertas
 

@@ -64,7 +64,7 @@ Los consumers pueden activar un backoff exponencial con jitter para los mensajes
 ## Plan de archivos
 
 `packages/sqs-consumer`:
-- `lib/helpers/retry-backoff.js` (nuevo) — config, cálculo de delay, chunking por cola, `ChangeMessageVisibilityBatch`, estado por container (AccessDenied, FIFO warn).
+- `lib/retry-backoff/{index,config,delay,visibility-changer}.js` (nuevo) — ver Decisiones.
 - `lib/sqs-handler.js` (edit) — lee el getter, guarda `minDelaySeconds` por failed, aplica el backoff al final de `handle()`.
 - `lib/sqs-consumer.js` (edit) — `addFailedMessage(messageId, options)`.
 - `lib/index.js` (edit) — export `RetryBackoff`.
@@ -87,6 +87,8 @@ Los consumers pueden activar un backoff exponencial con jitter para los mensajes
 - El backoff corre después de `janiscommerce.ended`: los logs del consumer ya están emitidos y la latencia extra no afecta su flush.
 
 - Review: `undefined`, `null` y `false` en el getter apagan el backoff sin log. `max` se valida contra 42300 (12 h − 15 min de Lambda): SQS cuenta las 12 h desde la recepción. Todo delay (fórmula o `delaySeconds`) queda en `[1, max]`. `@aws-sdk/client-sqs` se carga lazy. `RetryBackoff` es una clase con métodos estáticos (standard de packages). `handle()` envuelve el backoff en try/catch.
+
+- Review de código (usuario): sin `WeakMap`, sin `global-require`, sin `function` sueltas. `lib/retry-backoff/` con una clase estática por responsabilidad: `RetryBackoff` (API pública, `apply()`, estado del container y logs), `RetryBackoffConfig` (defaults + validación con `@janiscommerce/superstruct`), `RetryDelay` (attempt y cálculo), `VisibilityChanger` (cliente SQS, ARN, chunks, errores). Estado del container estático plano en `RetryBackoff`, sin key por Consumer (un Lambda = un Consumer). El SDK de SQS se carga siempre.
 
 ## Abiertas
 

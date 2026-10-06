@@ -78,7 +78,7 @@ describe('RetryBackoff', () => {
 
 			it(`Should use the defaults when the config is ${JSON.stringify(input)}`, () => {
 
-				sinon.stub(Math, 'random').returns(0.5);
+				sinon.stub(Math, 'random').returns(0);
 				assert.strictEqual(RetryBackoff.getRetryDelaySeconds(2, input), 120);
 			});
 		});
@@ -88,6 +88,20 @@ describe('RetryBackoff', () => {
 			assert.strictEqual(RetryBackoff.getRetryDelaySeconds(1, { jitterRatio: 0 }, 200), 200);
 		});
 
+		it('Should apply the base delay as floor and the jitter upwards', () => {
+
+			sinon.stub(Math, 'random').returns(0.999);
+			assert.strictEqual(RetryBackoff.getRetryDelaySeconds(1, undefined, 10), 72);
+
+			Math.random.returns(0);
+			assert.strictEqual(RetryBackoff.getRetryDelaySeconds(1, undefined, 10), 60);
+		});
+
+		it('Should cap at maxDelaySeconds without the cap of the invocation', () => {
+
+			assert.strictEqual(RetryBackoff.getRetryDelaySeconds(1, { maxDelaySeconds: 43200, jitterRatio: 0 }, 43200), 43200);
+		});
+
 		it('Should throw an Error with the reason when the config is invalid', () => {
 
 			assert.throws(
@@ -95,8 +109,8 @@ describe('RetryBackoff', () => {
 				{ message: 'Invalid retryBackoff config: baseDelaySeconds must be greater than 0' }
 			);
 			assert.throws(
-				() => RetryBackoff.getRetryDelaySeconds(1, { maxDelaySeconds: 42301 }),
-				{ message: /maxDelaySeconds must not be greater than 42300/ }
+				() => RetryBackoff.getRetryDelaySeconds(1, { maxDelaySeconds: 43201 }),
+				{ message: /maxDelaySeconds must not be greater than 43200/ }
 			);
 			assert.throws(() => RetryBackoff.getRetryDelaySeconds(1, 'foo'), { message: /retryBackoff must be an object/ });
 		});
@@ -276,6 +290,28 @@ describe('RetryBackoff', () => {
 			await RetryBackoff.apply(consumerInstance, [buildRecord(1)], [{ messageId: 'msg-1' }]);
 
 			sinon.assert.calledTwice(getter);
+		});
+
+		it('Should cap the delays with the time left of the invocation', async () => {
+
+			const startedAt = 1700000000000;
+			const longConfig = { baseDelaySeconds: 60, maxDelaySeconds: 43200, jitterRatio: 0 };
+			const failedMessages = [{ messageId: 'msg-1', delaySeconds: 43200 }, { messageId: 'msg-2', delaySeconds: 1000 }];
+
+			sinon.useFakeTimers(startedAt + 600000);
+
+			await RetryBackoff.apply({ retryBackoff: longConfig }, [buildRecord(1), buildRecord(2)], failedMessages, startedAt);
+
+			assert.deepStrictEqual(getEntries().Entries.map(({ VisibilityTimeout }) => VisibilityTimeout), [42270, 1000]);
+		});
+
+		it('Should take the start of the invocation from now when it is not received', async () => {
+
+			sinon.useFakeTimers(1700000000000);
+
+			await RetryBackoff.apply({ retryBackoff: { maxDelaySeconds: 43200 } }, [buildRecord(1)], [{ messageId: 'msg-1', delaySeconds: 43200 }]);
+
+			assert.strictEqual(getEntries().Entries[0].VisibilityTimeout, 42870);
 		});
 
 		it('Should not call SQS if the backoff is disabled', async () => {

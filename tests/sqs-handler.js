@@ -569,7 +569,7 @@ describe('SQS Handler', () => {
 			sqsMock.on(ChangeMessageVisibilityBatchCommand).resolves({ Successful: [], Failed: [] });
 			VisibilityChanger.resetClients();
 			RetryBackoff.resetState();
-			sinon.stub(Math, 'random').returns(0.5);
+			sinon.stub(Math, 'random').returns(0);
 			logs.info = sinon.stub(loggerPrototype, 'info');
 			logs.warn = sinon.stub(loggerPrototype, 'warn');
 			logs.error = sinon.stub(loggerPrototype, 'error');
@@ -649,7 +649,7 @@ describe('SQS Handler', () => {
 
 		it('Should apply the jitter to the delay', async () => {
 
-			Math.random.returns(1);
+			Math.random.returns(0.999);
 
 			await SQSHandler.handle(buildConsumer({ retryBackoff: config, failedIds: ['msg-1'] }), buildEvent(1));
 
@@ -671,6 +671,29 @@ describe('SQS Handler', () => {
 			);
 
 			assert.deepStrictEqual(getVisibilityEntries().map(({ VisibilityTimeout }) => VisibilityTimeout), [900]);
+		});
+
+		it('Should cap the delay with the time elapsed since the start of the invocation', async () => {
+
+			const startedAt = 1700000000000;
+
+			sinon.stub(Date, 'now').returns(startedAt);
+
+			class SlowConsumer extends BatchConsumer {
+
+				get retryBackoff() {
+					return { maxDelaySeconds: 43200 };
+				}
+
+				processBatch() {
+					Date.now.returns(startedAt + 600000);
+					this.addFailedMessage('msg-1', { delaySeconds: 43200 });
+				}
+			}
+
+			await SQSHandler.handle(SlowConsumer, buildEvent(1));
+
+			assert.deepStrictEqual(getVisibilityEntries().map(({ VisibilityTimeout }) => VisibilityTimeout), [42270]);
 		});
 
 		it('Should raise the delay up to minDelaySeconds and cap the floor with maxDelaySeconds', async () => {
@@ -957,7 +980,7 @@ describe('SQS Handler', () => {
 			});
 		});
 
-		it('Should apply the exact delaySeconds without jitter, capped and floored to [1, max]', async () => {
+		it('Should apply the exact delaySeconds without jitter, capped to max and floored to base', async () => {
 
 			const Consumer = buildConsumer({
 				retryBackoff: config,
@@ -972,7 +995,7 @@ describe('SQS Handler', () => {
 
 			await SQSHandler.handle(Consumer, buildEvent(4));
 
-			assert.deepStrictEqual(getVisibilityEntries().map(({ VisibilityTimeout }) => VisibilityTimeout), [100, 900, 1, 60]);
+			assert.deepStrictEqual(getVisibilityEntries().map(({ VisibilityTimeout }) => VisibilityTimeout), [100, 900, 60, 60]);
 		});
 
 		it('Should use the options of the last addFailedMessage call of a message', async () => {

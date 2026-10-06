@@ -42,7 +42,7 @@ describe('RetryBackoffConfig', () => {
 
 		it('Should accept the limits', () => {
 
-			assert.strictEqual(RetryBackoffConfig.normalize({ baseDelaySeconds: 42300, maxDelaySeconds: 42300, jitterRatio: 0.99 }).valid, true);
+			assert.strictEqual(RetryBackoffConfig.normalize({ baseDelaySeconds: 43200, maxDelaySeconds: 43200, jitterRatio: 0.99 }).valid, true);
 		});
 
 		it('Should not mutate the defaults', () => {
@@ -62,7 +62,7 @@ describe('RetryBackoffConfig', () => {
 			['zero base', { baseDelaySeconds: 0 }, 'baseDelaySeconds must be greater than 0'],
 			['negative base', { baseDelaySeconds: -1 }, 'baseDelaySeconds must be greater than 0'],
 			['base greater than max', { baseDelaySeconds: 1000 }, 'baseDelaySeconds must not be greater than maxDelaySeconds'],
-			['max greater than 42300', { maxDelaySeconds: 42301 }, 'maxDelaySeconds must not be greater than 42300'],
+			['max greater than 43200', { maxDelaySeconds: 43201 }, 'maxDelaySeconds must not be greater than 43200'],
 			['negative jitter', { jitterRatio: -0.1 }, 'jitterRatio must be in the range [0, 1)'],
 			['jitter of 1', { jitterRatio: 1 }, 'jitterRatio must be in the range [0, 1)']
 		].forEach(([title, input, reason]) => {

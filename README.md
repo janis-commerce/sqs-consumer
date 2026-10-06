@@ -92,21 +92,31 @@ Every field is optional and the getter can return `{}` or `true`. The default va
 
 | Field | Default | Description |
 |-------|---------|-------------|
-| `baseDelaySeconds` | `60` | Delay of the first retry. Must be greater than 0 and not greater than `maxDelaySeconds` |
-| `maxDelaySeconds` | `900` | Maximum delay. Must not be greater than `42300` (12 hours minus 15 minutes: SQS counts the 12 hours since the message was received) |
-| `jitterRatio` | `0.2` | Random variation of the delay (±). Must be in the range `[0, 1)` |
+| `baseDelaySeconds` | `60` | Delay of the first retry and floor of every delay. Must be greater than 0 and not greater than `maxDelaySeconds` |
+| `maxDelaySeconds` | `900` | Maximum delay. Must not be greater than `43200` (12 hours, the maximum visibility timeout of SQS). See [Long waits](#long-waits-up-to-12-hours) |
+| `jitterRatio` | `0.2` | Random increase of the delay, from `0` to `jitterRatio` of it. Must be in the range `[0, 1)` |
 
 The delay in seconds of each failed message is calculated as follows:
 
 ```
-delay = min(maxDelaySeconds, max(minDelaySeconds, round(baseDelaySeconds × 2^(attempt − 1) × jitter)))
+delay = min(maxDelaySeconds, max(baseDelaySeconds, ceil(max(minDelaySeconds, baseDelaySeconds × 2^(attempt − 1) × (1 + random × jitterRatio)))))
 ```
 
-Every delay, from the formula or from `delaySeconds`, is an integer of at least `1` second and at most `maxDelaySeconds`.
+With the defaults:
+
+| Failed attempt | `60 × 2^(n−1)` | Applied delay (jitter +0–20 %, cap 900) | Accumulated (nominal) |
+|----------------|----------------|------------------------------------------|-----------------------|
+| 1 | 60 s | 60–72 s | 1 min |
+| 2 | 120 s | 120–144 s | 3 min |
+| 3 | 240 s | 240–288 s | 7 min |
+| 4 | 480 s | 480–576 s | 15 min |
+| 5 | 960 s | 900 s | 30 min |
+| 6+ | ≥ 1920 s | 900 s | +15 min each |
 
 - `attempt` is the `ApproximateReceiveCount` of the message (the first receive is `1`).
-- `jitter` is a random factor between `1 - jitterRatio` and `1 + jitterRatio`.
-- `minDelaySeconds` is optional (default `0`) and is set with `addFailedMessage(messageId, { minDelaySeconds })`. If the same message is added more than once, the last `minDelaySeconds` is used.
+- `baseDelaySeconds` is the floor of every delay: the formula, `minDelaySeconds` and the exact `delaySeconds` are never lower than it.
+- The jitter only increases the delay, so no retry happens before the nominal delay.
+- `minDelaySeconds` is optional (default `0`) and is set with `addFailedMessage(messageId, { minDelaySeconds })`. The delay is at least that value. With `300`, the attempts 1 to 3 wait `300` seconds. If the same message is added more than once, the last `minDelaySeconds` is used.
 
 ```js
 this.addFailedMessage(record.messageId, { minDelaySeconds: 120 });
@@ -114,11 +124,19 @@ this.addFailedMessage(record.messageId, { minDelaySeconds: 120 });
 
 #### Exact delay
 
-If you already calculated the delay of a message, pass it with `delaySeconds`: `addFailedMessage(messageId, { delaySeconds })`. It replaces the formula and `minDelaySeconds`, has no jitter and is only limited to `[1, maxDelaySeconds]`. If the same message is added more than once, the options of the last call are used.
+If you already calculated the delay of a message, pass it with `delaySeconds`: `addFailedMessage(messageId, { delaySeconds })`. It replaces the formula and `minDelaySeconds` and has no jitter. It is only floored by `baseDelaySeconds` and capped by `maxDelaySeconds`. If the same message is added more than once, the options of the last call are used.
 
 ```js
 this.addFailedMessage(record.messageId, { delaySeconds: 600 });
 ```
+
+#### Long waits (up to 12 hours)
+
+`maxDelaySeconds` can be up to `43200` (12 hours) to wait and continue a process later. SQS counts the 12 hours since the message was received, not since the visibility change, and rejects a longer visibility. So each delay is also capped by the time that is left in that invocation: `43200 − 300 (maximum batching window of Lambda) − seconds elapsed since the start of the invocation − 30 (margin)`. In practice, the cap is about 11 h 54 min.
+
+- If SQS rejects the change anyway (for example, an invocation delayed by throttling), the message is reported as failed, a warning is logged and the message returns with the visibility timeout of the queue. There are no retries.
+- The `MessageRetentionPeriod` of the queue must cover the sum of the delays × `maxReceiveCount`. If it does not, SQS deletes the message before it reaches the DLQ.
+- `ApproximateReceiveCount` keeps adding in every retry, so the message reaches the DLQ with `maxReceiveCount`.
 
 #### RetryBackoff
 
@@ -140,7 +158,7 @@ this.addFailedMessage(record.messageId, { delaySeconds });
 ```
 
 - `getAttempt()` returns the `ApproximateReceiveCount` of the record. A missing or invalid count is `1`.
-- `getRetryDelaySeconds()` accepts the same `config` as the getter and completes the missing fields with the defaults. Unlike the handler, it throws an `Error` with the reason if the config is invalid.
+- `getRetryDelaySeconds()` accepts the same `config` as the getter and completes the missing fields with the defaults. It applies the jitter, the floor of `baseDelaySeconds` and `maxDelaySeconds`, but not the cap of the invocation. Unlike the handler, it throws an `Error` with the reason if the config is invalid.
 
 The backoff is applied at the end of the invocation, only to the messages reported with `addFailedMessage()`, and only if the consumer finished without throwing. The failed messages are always returned in `batchItemFailures`, even if their visibility could not be changed (a warning is logged). A summary of the backoff of each invocation is logged.
 

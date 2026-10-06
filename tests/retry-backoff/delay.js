@@ -44,16 +44,17 @@ describe('RetryDelay', () => {
 			assert.strictEqual(RetryDelay.calculate('foo', noJitterConfig), 60);
 		});
 
-		it('Should apply the jitter in both directions', () => {
+		it('Should apply the jitter only upwards', () => {
 
 			sinon.stub(Math, 'random').returns(0);
-			assert.strictEqual(RetryDelay.calculate(1, config), 48);
-
-			Math.random.returns(0.5);
 			assert.strictEqual(RetryDelay.calculate(1, config), 60);
 
-			Math.random.returns(1);
+			Math.random.returns(0.5);
+			assert.strictEqual(RetryDelay.calculate(1, config), 66);
+
+			Math.random.returns(0.999);
 			assert.strictEqual(RetryDelay.calculate(1, config), 72);
+			assert.strictEqual(RetryDelay.calculate(2, config), 144);
 		});
 
 		it('Should round the result to an integer', () => {
@@ -87,7 +88,7 @@ describe('RetryDelay', () => {
 
 		it('Should cap at maxDelaySeconds after the jitter', () => {
 
-			sinon.stub(Math, 'random').returns(1);
+			sinon.stub(Math, 'random').returns(0.999);
 			assert.strictEqual(RetryDelay.calculate(5, config), 900);
 		});
 
@@ -96,9 +97,9 @@ describe('RetryDelay', () => {
 			assert.strictEqual(RetryDelay.calculate(5000, config), 900);
 		});
 
-		it('Should use the exact delaySeconds without jitter nor floor', () => {
+		it('Should use the exact delaySeconds without jitter nor minDelaySeconds', () => {
 
-			sinon.stub(Math, 'random').returns(1);
+			sinon.stub(Math, 'random').returns(0.999);
 			assert.strictEqual(RetryDelay.calculate(3, config, { delaySeconds: 100, minDelaySeconds: 500 }), 100);
 		});
 
@@ -109,15 +110,20 @@ describe('RetryDelay', () => {
 
 		it('Should ceil a fractional exact delaySeconds', () => {
 
-			assert.strictEqual(RetryDelay.calculate(1, config, { delaySeconds: 10.2 }), 11);
+			assert.strictEqual(RetryDelay.calculate(1, config, { delaySeconds: 100.2 }), 101);
 		});
 
-		[0, -5].forEach(delaySeconds => {
+		[0, -5, 30].forEach(delaySeconds => {
 
-			it(`Should raise an exact delaySeconds of ${delaySeconds} to 1`, () => {
+			it(`Should raise an exact delaySeconds of ${delaySeconds} to baseDelaySeconds`, () => {
 
-				assert.strictEqual(RetryDelay.calculate(1, config, { delaySeconds }), 1);
+				assert.strictEqual(RetryDelay.calculate(1, config, { delaySeconds }), 60);
 			});
+		});
+
+		it('Should raise a minDelaySeconds lower than baseDelaySeconds to baseDelaySeconds', () => {
+
+			assert.strictEqual(RetryDelay.calculate(1, noJitterConfig, { minDelaySeconds: 10 }), 60);
 		});
 
 		it('Should ignore an invalid delaySeconds and use the formula', () => {
@@ -126,17 +132,55 @@ describe('RetryDelay', () => {
 			assert.strictEqual(RetryDelay.calculate(1, noJitterConfig, { delaySeconds: NaN }), 60);
 		});
 
-		it('Should never return less than 1 second', () => {
+		it('Should round up a fractional baseDelaySeconds', () => {
 
 			sinon.stub(Math, 'random').returns(0);
 			assert.strictEqual(RetryDelay.calculate(1, { baseDelaySeconds: 0.5, maxDelaySeconds: 10, jitterRatio: 0.5 }), 1);
 		});
 
-		it('Should cap at 42300 seconds', () => {
+		it('Should cap at 43200 seconds', () => {
 
-			const maxConfig = { baseDelaySeconds: 40000, maxDelaySeconds: 42300, jitterRatio: 0 };
-			assert.strictEqual(RetryDelay.calculate(3, maxConfig), 42300);
-			assert.strictEqual(RetryDelay.calculate(1, maxConfig, { delaySeconds: 43200 }), 42300);
+			const maxConfig = { baseDelaySeconds: 40000, maxDelaySeconds: 43200, jitterRatio: 0 };
+			assert.strictEqual(RetryDelay.calculate(3, maxConfig), 43200);
+			assert.strictEqual(RetryDelay.calculate(1, maxConfig, { delaySeconds: 50000 }), 43200);
+		});
+	});
+
+	describe('limitToInvocation', () => {
+
+		const maxConfig = { ...config, maxDelaySeconds: 43200 };
+
+		const startedAt = 1700000000000;
+
+		it('Should limit maxDelaySeconds to 43200 - 300 - 30 when the invocation just started', () => {
+
+			sinon.useFakeTimers(startedAt);
+			assert.deepStrictEqual(RetryDelay.limitToInvocation(maxConfig, startedAt), { ...maxConfig, maxDelaySeconds: 42870 });
+		});
+
+		it('Should discount the seconds elapsed since the start of the invocation', () => {
+
+			sinon.useFakeTimers(startedAt + 600000);
+			assert.deepStrictEqual(RetryDelay.limitToInvocation(maxConfig, startedAt), { ...maxConfig, maxDelaySeconds: 42270 });
+		});
+
+		it('Should keep maxDelaySeconds when it is lower than the limit of the invocation', () => {
+
+			sinon.useFakeTimers(startedAt);
+			assert.deepStrictEqual(RetryDelay.limitToInvocation(config, startedAt), config);
+		});
+
+		it('Should cap the exact delay of 43200 with the limit of the invocation', () => {
+
+			sinon.useFakeTimers(startedAt + 600000);
+			assert.strictEqual(RetryDelay.calculate(1, RetryDelay.limitToInvocation(maxConfig, startedAt), { delaySeconds: 43200 }), 42270);
+		});
+
+		it('Should not mutate the config', () => {
+
+			sinon.useFakeTimers(startedAt);
+			RetryDelay.limitToInvocation(maxConfig, startedAt);
+			assert.strictEqual(maxConfig.maxDelaySeconds, 43200);
 		});
 	});
 });

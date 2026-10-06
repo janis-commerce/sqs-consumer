@@ -88,12 +88,12 @@ class MyConsumer extends BatchSQSConsumer {
 }
 ```
 
-Every field is optional and the getter can return `{}`. The default values are the ones of the example. If the getter is not defined, the backoff is disabled and nothing changes.
+Every field is optional and the getter can return `{}`. The default values are the ones of the example. If the getter is not defined, or returns `undefined`, `null` or `false`, the backoff is disabled without logs and nothing changes.
 
 | Field | Default | Description |
 |-------|---------|-------------|
 | `baseDelaySeconds` | `60` | Delay of the first retry. Must be greater than 0 and not greater than `maxDelaySeconds` |
-| `maxDelaySeconds` | `900` | Maximum delay. Must not be greater than `43200` (12 hours) |
+| `maxDelaySeconds` | `900` | Maximum delay. Must not be greater than `42300` (12 hours minus 15 minutes: SQS counts the 12 hours since the message was received) |
 | `jitterRatio` | `0.2` | Random variation of the delay (±). Must be in the range `[0, 1)` |
 
 The delay in seconds of each failed message is calculated as follows:
@@ -102,6 +102,8 @@ The delay in seconds of each failed message is calculated as follows:
 delay = min(maxDelaySeconds, max(minDelaySeconds, round(baseDelaySeconds × 2^(attempt − 1) × jitter)))
 ```
 
+Every delay, from the formula or from `delaySeconds`, is an integer of at least `1` second and at most `maxDelaySeconds`.
+
 - `attempt` is the `ApproximateReceiveCount` of the message (the first receive is `1`).
 - `jitter` is a random factor between `1 - jitterRatio` and `1 + jitterRatio`.
 - `minDelaySeconds` is optional (default `0`) and is set with `addFailedMessage(messageId, { minDelaySeconds })`. If the same message is added more than once, the last `minDelaySeconds` is used.
@@ -109,6 +111,36 @@ delay = min(maxDelaySeconds, max(minDelaySeconds, round(baseDelaySeconds × 2^(a
 ```js
 this.addFailedMessage(record.messageId, { minDelaySeconds: 120 });
 ```
+
+#### Exact delay
+
+If you already calculated the delay of a message, pass it with `delaySeconds`: `addFailedMessage(messageId, { delaySeconds })`. It replaces the formula and `minDelaySeconds`, has no jitter and is only limited to `[1, maxDelaySeconds]`. If the same message is added more than once, the options of the last call are used.
+
+```js
+this.addFailedMessage(record.messageId, { delaySeconds: 600 });
+```
+
+#### RetryBackoff
+
+The package exports `RetryBackoff` with the same calculation used by the handler, so a service can precalculate the delay (for example, to store the date of the next retry) and then pass it with `delaySeconds`:
+
+```js
+const { RetryBackoff } = require('@janiscommerce/sqs-consumer');
+
+// RetryBackoff.getAttempt(record: SQSRecord): number
+// RetryBackoff.getRetryDelaySeconds(attempt: number, config?: RetryBackoffConfig, minDelaySeconds?: number): number
+
+const attempt = RetryBackoff.getAttempt(record);
+
+const delaySeconds = RetryBackoff.getRetryDelaySeconds(attempt, { baseDelaySeconds: 300, maxDelaySeconds: 7200 });
+
+await this.saveNextRetryDate(record, new Date(Date.now() + (delaySeconds * 1000)));
+
+this.addFailedMessage(record.messageId, { delaySeconds });
+```
+
+- `getAttempt()` returns the `ApproximateReceiveCount` of the record. A missing or invalid count is `1`.
+- `getRetryDelaySeconds()` accepts the same `config` as the getter and completes the missing fields with the defaults. Unlike the handler, it throws an `Error` with the reason if the config is invalid.
 
 The backoff is applied at the end of the invocation, only to the messages reported with `addFailedMessage()`, and only if the consumer finished without throwing. The failed messages are always returned in `batchItemFailures`, even if their visibility could not be changed (a warning is logged). A summary of the backoff of each invocation is logged.
 

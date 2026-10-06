@@ -5,14 +5,19 @@ const sinon = require('sinon');
 const { mockClient } = require('aws-sdk-client-mock');
 const { SQSClient, ChangeMessageVisibilityBatchCommand } = require('@aws-sdk/client-sqs');
 
+const RetryBackoff = require('../../lib/helpers/retry-backoff');
+const { RetryBackoff: ExportedRetryBackoff } = require('../../lib');
+
 const {
 	normalizeConfig,
 	getAttempt,
 	getRetryDelaySeconds,
+	calculateDelaySeconds,
 	parseQueueArn,
 	applyRetryBackoff,
 	resetClients
-} = require('../../lib/helpers/retry-backoff');
+} = ['normalizeConfig', 'getAttempt', 'getRetryDelaySeconds', 'calculateDelaySeconds', 'parseQueueArn', 'applyRetryBackoff', 'resetClients']
+	.reduce((methods, name) => ({ ...methods, [name]: (...args) => RetryBackoff[name](...args) }), {});
 
 describe('Helpers', () => {
 
@@ -47,10 +52,15 @@ describe('Helpers', () => {
 
 		describe('normalizeConfig', () => {
 
-			it('Should apply the defaults when the config is empty, null or undefined', () => {
+			it('Should apply the defaults when the config is empty', () => {
 
-				[{}, null, undefined].forEach(input => {
-					assert.deepStrictEqual(normalizeConfig(input), { valid: true, config });
+				assert.deepStrictEqual(normalizeConfig({}), { valid: true, config });
+			});
+
+			[undefined, null, false].forEach(input => {
+
+				it(`Should return valid and disabled when the config is ${input}`, () => {
+					assert.deepStrictEqual(normalizeConfig(input), { valid: true, disabled: true });
 				});
 			});
 
@@ -64,7 +74,7 @@ describe('Helpers', () => {
 
 			it('Should accept the limits', () => {
 
-				assert.strictEqual(normalizeConfig({ baseDelaySeconds: 43200, maxDelaySeconds: 43200, jitterRatio: 0.99 }).valid, true);
+				assert.strictEqual(normalizeConfig({ baseDelaySeconds: 42300, maxDelaySeconds: 42300, jitterRatio: 0.99 }).valid, true);
 			});
 
 			[
@@ -76,7 +86,8 @@ describe('Helpers', () => {
 				['zero base', { baseDelaySeconds: 0 }, 'baseDelaySeconds must be greater than 0'],
 				['negative base', { baseDelaySeconds: -1 }, 'baseDelaySeconds must be greater than 0'],
 				['base greater than max', { baseDelaySeconds: 1000 }, 'baseDelaySeconds must not be greater than maxDelaySeconds'],
-				['max greater than 43200', { maxDelaySeconds: 43201 }, 'maxDelaySeconds must not be greater than 43200'],
+				['max greater than 42300', { maxDelaySeconds: 42301 }, 'maxDelaySeconds must not be greater than 42300'],
+				['not an object (true)', true, 'retryBackoff must be an object'],
 				['negative jitter', { jitterRatio: -0.1 }, 'jitterRatio must be in the range [0, 1)'],
 				['jitter of 1', { jitterRatio: 1 }, 'jitterRatio must be in the range [0, 1)']
 			].forEach(([title, input, reason]) => {
@@ -103,69 +114,165 @@ describe('Helpers', () => {
 			});
 		});
 
-		describe('getRetryDelaySeconds', () => {
+		describe('calculateDelaySeconds', () => {
 
 			it('Should grow exponentially without jitter', () => {
 
-				assert.deepStrictEqual([1, 2, 3, 4].map(attempt => getRetryDelaySeconds(attempt, noJitterConfig)), [60, 120, 240, 480]);
+				assert.deepStrictEqual([1, 2, 3, 4].map(attempt => calculateDelaySeconds(attempt, noJitterConfig)), [60, 120, 240, 480]);
 			});
 
 			it('Should use the first attempt when the attempt is invalid', () => {
 
-				assert.strictEqual(getRetryDelaySeconds(0, noJitterConfig), 60);
-				assert.strictEqual(getRetryDelaySeconds('foo', noJitterConfig), 60);
+				assert.strictEqual(calculateDelaySeconds(0, noJitterConfig), 60);
+				assert.strictEqual(calculateDelaySeconds('foo', noJitterConfig), 60);
 			});
 
 			it('Should apply the jitter in both directions', () => {
 
 				sinon.stub(Math, 'random').returns(0);
-				assert.strictEqual(getRetryDelaySeconds(1, config), 48);
+				assert.strictEqual(calculateDelaySeconds(1, config), 48);
 
 				Math.random.returns(0.5);
-				assert.strictEqual(getRetryDelaySeconds(1, config), 60);
+				assert.strictEqual(calculateDelaySeconds(1, config), 60);
 
 				Math.random.returns(1);
-				assert.strictEqual(getRetryDelaySeconds(1, config), 72);
+				assert.strictEqual(calculateDelaySeconds(1, config), 72);
 			});
 
 			it('Should round the result to an integer', () => {
 
 				sinon.stub(Math, 'random').returns(0.123);
-				assert.ok(Number.isInteger(getRetryDelaySeconds(1, { ...config, baseDelaySeconds: 7 })));
+				assert.ok(Number.isInteger(calculateDelaySeconds(1, { ...config, baseDelaySeconds: 7 })));
 			});
 
 			it('Should raise the delay up to minDelaySeconds', () => {
 
-				assert.strictEqual(getRetryDelaySeconds(1, noJitterConfig, 200), 200);
-				assert.strictEqual(getRetryDelaySeconds(1, noJitterConfig, 30), 60);
+				assert.strictEqual(calculateDelaySeconds(1, noJitterConfig, { minDelaySeconds: 200 }), 200);
+				assert.strictEqual(calculateDelaySeconds(1, noJitterConfig, { minDelaySeconds: 30 }), 60);
 			});
 
 			it('Should ignore an invalid minDelaySeconds', () => {
 
-				assert.strictEqual(getRetryDelaySeconds(1, noJitterConfig, 'foo'), 60);
-				assert.strictEqual(getRetryDelaySeconds(1, noJitterConfig, NaN), 60);
+				assert.strictEqual(calculateDelaySeconds(1, noJitterConfig, { minDelaySeconds: 'foo' }), 60);
+				assert.strictEqual(calculateDelaySeconds(1, noJitterConfig, { minDelaySeconds: NaN }), 60);
 			});
 
 			it('Should ceil a fractional minDelaySeconds', () => {
 
-				assert.strictEqual(getRetryDelaySeconds(1, noJitterConfig, 100.2), 101);
+				assert.strictEqual(calculateDelaySeconds(1, noJitterConfig, { minDelaySeconds: 100.2 }), 101);
 			});
 
 			it('Should cap the delay at maxDelaySeconds, also the floor', () => {
 
-				assert.strictEqual(getRetryDelaySeconds(10, noJitterConfig), 900);
-				assert.strictEqual(getRetryDelaySeconds(1, noJitterConfig, 5000), 900);
+				assert.strictEqual(calculateDelaySeconds(10, noJitterConfig), 900);
+				assert.strictEqual(calculateDelaySeconds(1, noJitterConfig, { minDelaySeconds: 5000 }), 900);
 			});
 
 			it('Should cap at maxDelaySeconds after the jitter', () => {
 
 				sinon.stub(Math, 'random').returns(1);
-				assert.strictEqual(getRetryDelaySeconds(5, config), 900);
+				assert.strictEqual(calculateDelaySeconds(5, config), 900);
 			});
 
 			it('Should return maxDelaySeconds when 2 ** n overflows', () => {
 
-				assert.strictEqual(getRetryDelaySeconds(5000, config), 900);
+				assert.strictEqual(calculateDelaySeconds(5000, config), 900);
+			});
+
+			it('Should use the exact delaySeconds without jitter nor floor', () => {
+
+				sinon.stub(Math, 'random').returns(1);
+				assert.strictEqual(calculateDelaySeconds(3, config, { delaySeconds: 100, minDelaySeconds: 500 }), 100);
+			});
+
+			it('Should cap the exact delaySeconds at maxDelaySeconds', () => {
+
+				assert.strictEqual(calculateDelaySeconds(1, config, { delaySeconds: 5000 }), 900);
+			});
+
+			it('Should ceil a fractional exact delaySeconds', () => {
+
+				assert.strictEqual(calculateDelaySeconds(1, config, { delaySeconds: 10.2 }), 11);
+			});
+
+			[0, -5].forEach(delaySeconds => {
+
+				it(`Should raise an exact delaySeconds of ${delaySeconds} to 1`, () => {
+
+					assert.strictEqual(calculateDelaySeconds(1, config, { delaySeconds }), 1);
+				});
+			});
+
+			it('Should ignore an invalid delaySeconds and use the formula', () => {
+
+				assert.strictEqual(calculateDelaySeconds(1, noJitterConfig, { delaySeconds: 'foo' }), 60);
+				assert.strictEqual(calculateDelaySeconds(1, noJitterConfig, { delaySeconds: NaN }), 60);
+			});
+
+			it('Should never return less than 1 second', () => {
+
+				sinon.stub(Math, 'random').returns(0);
+				assert.strictEqual(calculateDelaySeconds(1, { baseDelaySeconds: 0.5, maxDelaySeconds: 10, jitterRatio: 0.5 }), 1);
+			});
+
+			it('Should cap at 42300 seconds', () => {
+
+				const maxConfig = { baseDelaySeconds: 40000, maxDelaySeconds: 42300, jitterRatio: 0 };
+				assert.strictEqual(calculateDelaySeconds(3, maxConfig), 42300);
+				assert.strictEqual(calculateDelaySeconds(1, maxConfig, { delaySeconds: 43200 }), 42300);
+			});
+		});
+
+		describe('getRetryDelaySeconds', () => {
+
+			it('Should be exported from the package index', () => {
+
+				assert.strictEqual(ExportedRetryBackoff, RetryBackoff);
+				assert.strictEqual(typeof ExportedRetryBackoff.getAttempt, 'function');
+				assert.strictEqual(typeof ExportedRetryBackoff.getRetryDelaySeconds, 'function');
+			});
+
+			it('Should complete the missing fields of the config with the defaults', () => {
+
+				assert.deepStrictEqual([1, 2, 3].map(attempt => getRetryDelaySeconds(attempt, { jitterRatio: 0 })), [60, 120, 240]);
+				assert.strictEqual(getRetryDelaySeconds(1, { baseDelaySeconds: 300, jitterRatio: 0 }), 300);
+			});
+
+			[undefined, null, false, {}].forEach(input => {
+
+				it(`Should use the defaults when the config is ${JSON.stringify(input)}`, () => {
+
+					sinon.stub(Math, 'random').returns(0.5);
+					assert.strictEqual(getRetryDelaySeconds(2, input), 120);
+				});
+			});
+
+			it('Should apply minDelaySeconds', () => {
+
+				assert.strictEqual(getRetryDelaySeconds(1, { jitterRatio: 0 }, 200), 200);
+			});
+
+			it('Should throw an Error with the reason when the config is invalid', () => {
+
+				assert.throws(
+					() => getRetryDelaySeconds(1, { baseDelaySeconds: 0 }),
+					{ message: 'Invalid retryBackoff config: baseDelaySeconds must be greater than 0' }
+				);
+				assert.throws(() => getRetryDelaySeconds(1, { maxDelaySeconds: 42301 }), { message: /maxDelaySeconds must not be greater than 42300/ });
+				assert.throws(() => getRetryDelaySeconds(1, 'foo'), { message: /retryBackoff must be an object/ });
+			});
+
+			it('Should return the same delay the handler applies, with the same Math.random', async () => {
+
+				sinon.stub(Math, 'random').returns(0.3);
+
+				const records = [buildRecord(1, { attributes: { ApproximateReceiveCount: '3' } })];
+
+				await applyRetryBackoff(records, [{ messageId: 'msg-1' }], normalizeConfig({ baseDelaySeconds: 300 }).config);
+
+				const [{ VisibilityTimeout }] = sqsMock.commandCalls(ChangeMessageVisibilityBatchCommand)[0].args[0].input.Entries;
+
+				assert.strictEqual(getRetryDelaySeconds(getAttempt(records[0]), { baseDelaySeconds: 300 }), VisibilityTimeout);
 			});
 		});
 
@@ -240,6 +347,36 @@ describe('Helpers', () => {
 
 				assert.deepStrictEqual(getEntries().Entries, [{ Id: '0', ReceiptHandle: 'handle-1', VisibilityTimeout: 200 }]);
 				assert.strictEqual(result.summary.applied, 1);
+			});
+
+			it('Should use the exact delaySeconds of the last call of a repeated message', async () => {
+
+				await applyRetryBackoff([buildRecord(1)], [
+					{ messageId: 'msg-1', minDelaySeconds: 100, delaySeconds: 50 },
+					{ messageId: 'msg-1', delaySeconds: 5000 }
+				], config);
+
+				assert.deepStrictEqual(getEntries().Entries, [{ Id: '0', ReceiptHandle: 'handle-1', VisibilityTimeout: 900 }]);
+			});
+
+			it('Should not load the SQS client until the visibility is changed', async () => {
+
+				const sqsModulePath = require.resolve('@aws-sdk/client-sqs');
+				const retryBackoffPath = require.resolve('../../lib/helpers/retry-backoff');
+				const cachedSqs = require.cache[sqsModulePath];
+				const cachedRetry = require.cache[retryBackoffPath];
+
+				delete require.cache[sqsModulePath];
+				delete require.cache[retryBackoffPath];
+
+				try {
+					// eslint-disable-next-line global-require
+					require('../../lib/helpers/retry-backoff');
+					assert.strictEqual(require.cache[sqsModulePath], undefined);
+				} finally {
+					require.cache[sqsModulePath] = cachedSqs;
+					require.cache[retryBackoffPath] = cachedRetry;
+				}
 			});
 
 			it('Should not call SQS when there are no failed messages', async () => {

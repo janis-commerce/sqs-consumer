@@ -14,7 +14,7 @@ const { S3Client, GetObjectCommand } = require('@aws-sdk/client-s3');
 const { SQSClient, ChangeMessageVisibilityBatchCommand } = require('@aws-sdk/client-sqs');
 const lllog = require('lllog');
 
-const { SQSHandler, SQSConsumer, SQSHandlerError } = require('../lib');
+const { SQSHandler, SQSConsumer, SQSHandlerError, RetryBackoff: PublicRetryBackoff } = require('../lib');
 const LogTransport = require('../lib/log-transport');
 const RetryBackoff = require('../lib/helpers/retry-backoff');
 
@@ -524,7 +524,7 @@ describe('SQS Handler', () => {
 		});
 
 		const buildConsumer = ({
-			retryBackoff, failedIds = [], minDelays = {}, error, batch = true
+			retryBackoff, failedIds = [], minDelays = {}, failedOptions = {}, error, batch = true
 		} = {}) => {
 
 			const process = function(records) {
@@ -534,7 +534,7 @@ describe('SQS Handler', () => {
 
 				records.forEach(({ messageId }) => {
 					if(failedIds.includes(messageId))
-						this.addFailedMessage(messageId, minDelays[messageId] && { minDelaySeconds: minDelays[messageId] });
+						this.addFailedMessage(messageId, failedOptions[messageId] || (minDelays[messageId] && { minDelaySeconds: minDelays[messageId] }));
 				});
 			};
 
@@ -583,7 +583,6 @@ describe('SQS Handler', () => {
 		it('Should return the same failures and not call SQS nor the helper if there is no retryBackoff getter', async () => {
 
 			sinon.spy(RetryBackoff, 'applyRetryBackoff');
-			sinon.spy(RetryBackoff, 'normalizeConfig');
 
 			class DuplicatedConsumer extends BatchConsumer {
 				processBatch() {
@@ -603,7 +602,6 @@ describe('SQS Handler', () => {
 
 			assertSQSNotCalled();
 			sinon.assert.notCalled(RetryBackoff.applyRetryBackoff);
-			sinon.assert.notCalled(RetryBackoff.normalizeConfig);
 			sinon.assert.notCalled(logs.info);
 			sinon.assert.notCalled(logs.warn);
 			sinon.assert.notCalled(logs.error);
@@ -934,6 +932,85 @@ describe('SQS Handler', () => {
 			assert.deepStrictEqual(getVisibilityEntries(), [
 				{ Id: '0', ReceiptHandle: 'handle-2', VisibilityTimeout: 120 }
 			]);
+		});
+
+		[null, false].forEach(retryBackoff => {
+
+			it(`Should disable the backoff without logs if the getter returns ${retryBackoff}`, async () => {
+
+				sinon.spy(RetryBackoff, 'applyRetryBackoff');
+
+				const Consumer = buildConsumer({ retryBackoff, failedIds: ['msg-1'] });
+
+				const response = await SQSHandler.handle(Consumer, buildEvent(1));
+
+				assert.deepStrictEqual(response, { batchItemFailures: [{ itemIdentifier: 'msg-1' }] });
+
+				await SQSHandler.handle(Consumer, buildEvent(1));
+
+				assertSQSNotCalled();
+				sinon.assert.notCalled(RetryBackoff.applyRetryBackoff);
+				sinon.assert.notCalled(logs.error);
+				sinon.assert.notCalled(logs.warn);
+				sinon.assert.notCalled(logs.info);
+			});
+		});
+
+		it('Should apply the exact delaySeconds without jitter, capped and floored to [1, max]', async () => {
+
+			const Consumer = buildConsumer({
+				retryBackoff: config,
+				failedIds: ['msg-1', 'msg-2', 'msg-3', 'msg-4'],
+				failedOptions: {
+					'msg-1': { delaySeconds: 100, minDelaySeconds: 500 },
+					'msg-2': { delaySeconds: 5000 },
+					'msg-3': { delaySeconds: 0 },
+					'msg-4': { minDelaySeconds: 10 }
+				}
+			});
+
+			await SQSHandler.handle(Consumer, buildEvent(4));
+
+			assert.deepStrictEqual(getVisibilityEntries().map(({ VisibilityTimeout }) => VisibilityTimeout), [100, 900, 1, 60]);
+		});
+
+		it('Should use the options of the last addFailedMessage call of a message', async () => {
+
+			class RepeatedConsumer extends BatchConsumer {
+
+				get retryBackoff() {
+					return config;
+				}
+
+				processBatch() {
+					this.addFailedMessage('msg-1', { delaySeconds: 10 });
+					this.addFailedMessage('msg-1', { minDelaySeconds: 300 });
+				}
+			}
+
+			const response = await SQSHandler.handle(RepeatedConsumer, buildEvent(1));
+
+			assert.deepStrictEqual(response.batchItemFailures, [{ itemIdentifier: 'msg-1' }, { itemIdentifier: 'msg-1' }]);
+			assert.deepStrictEqual(getVisibilityEntries(), [{ Id: '0', ReceiptHandle: 'handle-1', VisibilityTimeout: 300 }]);
+		});
+
+		it('Should apply the same delay as RetryBackoff.getRetryDelaySeconds', async () => {
+
+			await SQSHandler.handle(buildConsumer({ retryBackoff: { baseDelaySeconds: 300 }, failedIds: ['msg-1'] }), buildEvent(1, { attempt: 3 }));
+
+			const [{ VisibilityTimeout }] = getVisibilityEntries();
+
+			assert.strictEqual(VisibilityTimeout, PublicRetryBackoff.getRetryDelaySeconds(3, { baseDelaySeconds: 300 }));
+		});
+
+		it('Should log an error and still return the failures if the backoff throws unexpectedly', async () => {
+
+			sinon.stub(RetryBackoff, 'applyRetryBackoff').rejects(new Error('Unexpected'));
+
+			const response = await SQSHandler.handle(buildConsumer({ retryBackoff: config, failedIds: ['msg-1'] }), buildEvent(1));
+
+			assert.deepStrictEqual(response, { batchItemFailures: [{ itemIdentifier: 'msg-1' }] });
+			sinon.assert.calledOnceWithExactly(logs.error, 'retryBackoff failed unexpectedly: Unexpected');
 		});
 
 		it('Should reset the failed delays on each invocation', async () => {

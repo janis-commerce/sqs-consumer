@@ -92,6 +92,9 @@ Los consumers pueden activar un backoff exponencial con jitter para los mensajes
 
 - Review de código 2 (usuario): getter `true` → defaults. Parseo del ARN en helper aislado `lib/helpers/queue-arn.js`. `VisibilityChanger` arma chunks y entries en un solo recorrido y envía en tandas de 10 llamadas concurrentes (no un `Promise.all` de todo: un batch de Lambda puede traer hasta 10.000 mensajes). Tras un AccessDenied no envía más tandas: los mensajes restantes quedan como fallo `AccessDenied`. `planChanges` recorre `failedMessages` una vez, sin `Map` ni plan mutado; `recordsByMessageId` es un objeto. `buildSummary` calcula todo en un solo recorrido de `changes`.
 
+- Review de código 3 (usuario): se usará para esperas de hasta ~12 h. `maxDelaySeconds` se valida contra 43200 (máximo de SQS). El tope efectivo es dinámico por invocación: `43200 − 300 (batching window máx) − segundos desde el inicio de handle() − 30 de margen`. Un delay mayor se recorta a ese tope. Si SQS igual rechaza (ej. throttling del ESM que demora la invocación), queda como fallo con warn y el mensaje vuelve con la visibility de la cola.
+- Review de código 3: `baseDelaySeconds` es el piso de todo delay (fórmula, `minDelaySeconds` y `delaySeconds` exacto). El jitter es solo hacia arriba: `base × 2^(n−1) × (1 + rand × jitterRatio)`. Reemplaza el piso de 1 s. README con tabla de ejemplo de los defaults.
+
 ## Abiertas
 
 —

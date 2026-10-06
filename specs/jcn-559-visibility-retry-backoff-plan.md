@@ -57,6 +57,14 @@ Depende de: Batch 4.
 - [x] `VisibilityChanger`: un recorrido para chunks + entries; tandas de 10 chunks concurrentes; corte tras AccessDenied.
 - [x] `RetryBackoff.planChanges`: un recorrido de `failedMessages`, sin `Map` ni plan mutado; `buildSummary` en un recorrido.
 
+## Batch 6 — review de código 3 (usuario)
+
+Depende de: Batch 5.
+
+- [ ] Tope dinámico por invocación (12 h − batching window − elapsed − margen); config valida `max <= 43200`.
+- [ ] Jitter solo hacia arriba; `baseDelaySeconds` como piso de todo delay.
+- [ ] README: tabla de ejemplo con los defaults + nota de esperas largas (retention de la cola).
+
 ## Pendiente de release
 
 - Versión mínima del plugin en el mensaje de error y en el README: placeholder `11.6.0` (minor sobre 11.5.1). Confirmar al releasear el plugin (JCN-557 puede salir antes).

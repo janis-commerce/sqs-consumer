@@ -16,7 +16,8 @@ const lllog = require('lllog');
 
 const { SQSHandler, SQSConsumer, SQSHandlerError, RetryBackoff: PublicRetryBackoff } = require('../lib');
 const LogTransport = require('../lib/log-transport');
-const RetryBackoff = require('../lib/helpers/retry-backoff');
+const RetryBackoff = require('../lib/retry-backoff');
+const VisibilityChanger = require('../lib/retry-backoff/visibility-changer');
 
 const eventWithoutClient = {
 	Records: [
@@ -566,8 +567,8 @@ describe('SQS Handler', () => {
 		beforeEach(() => {
 			sqsMock = mockClient(SQSClient);
 			sqsMock.on(ChangeMessageVisibilityBatchCommand).resolves({ Successful: [], Failed: [] });
-			RetryBackoff.resetClients();
-			SQSHandler.resetRetryBackoffState();
+			VisibilityChanger.resetClients();
+			RetryBackoff.resetState();
 			sinon.stub(Math, 'random').returns(0.5);
 			logs.info = sinon.stub(loggerPrototype, 'info');
 			logs.warn = sinon.stub(loggerPrototype, 'warn');
@@ -576,13 +577,13 @@ describe('SQS Handler', () => {
 
 		afterEach(() => {
 			sqsMock.restore();
-			RetryBackoff.resetClients();
-			SQSHandler.resetRetryBackoffState();
+			VisibilityChanger.resetClients();
+			RetryBackoff.resetState();
 		});
 
 		it('Should return the same failures and not call SQS nor the helper if there is no retryBackoff getter', async () => {
 
-			sinon.spy(RetryBackoff, 'applyRetryBackoff');
+			sinon.spy(VisibilityChanger, 'change');
 
 			class DuplicatedConsumer extends BatchConsumer {
 				processBatch() {
@@ -601,7 +602,7 @@ describe('SQS Handler', () => {
 			});
 
 			assertSQSNotCalled();
-			sinon.assert.notCalled(RetryBackoff.applyRetryBackoff);
+			sinon.assert.notCalled(VisibilityChanger.change);
 			sinon.assert.notCalled(logs.info);
 			sinon.assert.notCalled(logs.warn);
 			sinon.assert.notCalled(logs.error);
@@ -609,13 +610,13 @@ describe('SQS Handler', () => {
 
 		it('Should not call SQS nor the helper if there are no failed messages', async () => {
 
-			sinon.spy(RetryBackoff, 'applyRetryBackoff');
+			sinon.spy(RetryBackoff, 'apply');
 
 			const response = await SQSHandler.handle(buildConsumer({ retryBackoff: config }), buildEvent(3));
 
 			assert.strictEqual(response, undefined);
 			assertSQSNotCalled();
-			sinon.assert.notCalled(RetryBackoff.applyRetryBackoff);
+			sinon.assert.notCalled(RetryBackoff.apply);
 			sinon.assert.notCalled(logs.info);
 		});
 
@@ -815,19 +816,19 @@ describe('SQS Handler', () => {
 			assert.strictEqual(sqsMock.commandCalls(ChangeMessageVisibilityBatchCommand).length, 1);
 		});
 
-		it('Should keep the backoff enabled in other consumers if access is denied in one of them', async () => {
+		it('Should disable the backoff for the container if an entry fails with access denied', async () => {
 
 			sqsMock.on(ChangeMessageVisibilityBatchCommand).resolvesOnce({
 				Failed: [{ Id: '0', Code: 'AccessDenied', SenderFault: true }]
 			});
 
-			await SQSHandler.handle(buildConsumer({ retryBackoff: config, failedIds: ['msg-1'] }), buildEvent(1));
+			const Consumer = buildConsumer({ retryBackoff: config, failedIds: ['msg-1'] });
 
-			sqsMock.on(ChangeMessageVisibilityBatchCommand).resolves({ Successful: [{ Id: '0' }], Failed: [] });
+			await SQSHandler.handle(Consumer, buildEvent(1));
+			await SQSHandler.handle(Consumer, buildEvent(1));
 
-			await SQSHandler.handle(buildConsumer({ retryBackoff: config, failedIds: ['msg-1'] }), buildEvent(1));
-
-			assert.strictEqual(sqsMock.commandCalls(ChangeMessageVisibilityBatchCommand).length, 2);
+			assert.strictEqual(sqsMock.commandCalls(ChangeMessageVisibilityBatchCommand).length, 1);
+			sinon.assert.calledOnceWithExactly(logs.error, ACCESS_DENIED_MESSAGE);
 		});
 
 		it('Should not call SQS and warn only once per container if the queue is FIFO', async () => {
@@ -849,7 +850,7 @@ describe('SQS Handler', () => {
 
 		it('Should not call SQS if the handler rejects', async () => {
 
-			sinon.spy(RetryBackoff, 'applyRetryBackoff');
+			sinon.spy(RetryBackoff, 'apply');
 
 			class FailingConsumer extends BatchConsumer {
 
@@ -866,7 +867,7 @@ describe('SQS Handler', () => {
 			await assert.rejects(SQSHandler.handle(FailingConsumer, buildEvent(1)), { message: 'Handler error' });
 
 			assertSQSNotCalled();
-			sinon.assert.notCalled(RetryBackoff.applyRetryBackoff);
+			sinon.assert.notCalled(RetryBackoff.apply);
 		});
 
 		it('Should log a single error and not call SQS if the config is invalid', async () => {
@@ -938,7 +939,7 @@ describe('SQS Handler', () => {
 
 			it(`Should disable the backoff without logs if the getter returns ${retryBackoff}`, async () => {
 
-				sinon.spy(RetryBackoff, 'applyRetryBackoff');
+				sinon.spy(VisibilityChanger, 'change');
 
 				const Consumer = buildConsumer({ retryBackoff, failedIds: ['msg-1'] });
 
@@ -949,7 +950,7 @@ describe('SQS Handler', () => {
 				await SQSHandler.handle(Consumer, buildEvent(1));
 
 				assertSQSNotCalled();
-				sinon.assert.notCalled(RetryBackoff.applyRetryBackoff);
+				sinon.assert.notCalled(VisibilityChanger.change);
 				sinon.assert.notCalled(logs.error);
 				sinon.assert.notCalled(logs.warn);
 				sinon.assert.notCalled(logs.info);
@@ -1005,7 +1006,7 @@ describe('SQS Handler', () => {
 
 		it('Should log an error and still return the failures if the backoff throws unexpectedly', async () => {
 
-			sinon.stub(RetryBackoff, 'applyRetryBackoff').rejects(new Error('Unexpected'));
+			sinon.stub(RetryBackoff, 'apply').rejects(new Error('Unexpected'));
 
 			const response = await SQSHandler.handle(buildConsumer({ retryBackoff: config, failedIds: ['msg-1'] }), buildEvent(1));
 

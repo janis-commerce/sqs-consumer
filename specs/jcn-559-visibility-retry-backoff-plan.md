@@ -48,6 +48,15 @@ Depende de: Batch 3b.
 - [x] `lib/index.js` exporta `RetryBackoff` desde la ubicación nueva. API pública sin cambios.
 - [x] Tests reorganizados por archivo; coverage 100 %.
 
+## Batch 5 — review de código 2 (usuario)
+
+Depende de: Batch 4.
+
+- [ ] `RetryBackoffConfig`: `true` → defaults.
+- [ ] `lib/helpers/queue-arn.js` (`QueueArn.parse`), fuera de `VisibilityChanger`.
+- [ ] `VisibilityChanger`: un recorrido para chunks + entries; tandas de 10 chunks concurrentes; corte tras AccessDenied.
+- [ ] `RetryBackoff.planChanges`: un recorrido de `failedMessages`, sin `Map` ni plan mutado; `buildSummary` en un recorrido.
+
 ## Pendiente de release
 
 - Versión mínima del plugin en el mensaje de error y en el README: placeholder `11.6.0` (minor sobre 11.5.1). Confirmar al releasear el plugin (JCN-557 puede salir antes).

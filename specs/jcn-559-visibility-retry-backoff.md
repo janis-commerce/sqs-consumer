@@ -90,6 +90,8 @@ Los consumers pueden activar un backoff exponencial con jitter para los mensajes
 
 - Review de código (usuario): sin `WeakMap`, sin `global-require`, sin `function` sueltas. `lib/retry-backoff/` con una clase estática por responsabilidad: `RetryBackoff` (API pública, `apply()`, estado del container y logs), `RetryBackoffConfig` (defaults + validación con `@janiscommerce/superstruct`), `RetryDelay` (attempt y cálculo), `VisibilityChanger` (cliente SQS, ARN, chunks, errores). Estado del container estático plano en `RetryBackoff`, sin key por Consumer (un Lambda = un Consumer). El SDK de SQS se carga siempre.
 
+- Review de código 2 (usuario): getter `true` → defaults. Parseo del ARN en helper aislado `lib/helpers/queue-arn.js`. `VisibilityChanger` arma chunks y entries en un solo recorrido y envía en tandas de 10 llamadas concurrentes (no un `Promise.all` de todo: un batch de Lambda puede traer hasta 10.000 mensajes). Tras un AccessDenied no envía más tandas: los mensajes restantes quedan como fallo `AccessDenied`. `planChanges` recorre `failedMessages` una vez, sin `Map` ni plan mutado; `recordsByMessageId` es un objeto. `buildSummary` calcula todo en un solo recorrido de `changes`.
+
 ## Abiertas
 
 —

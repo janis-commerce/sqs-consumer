@@ -38,17 +38,17 @@ Depende de: Batch 2.
 
 - [x] Getter que tira → config inválida. `delaySeconds` exacto, export `RetryBackoff`, `null`/`false` apagan, tope 42300, mínimo 1 s, try/catch en `handle()`.
 
-## Batch 4 — refactor de estructura (review del usuario)
+## Batch 4 ✅ (65c35ce) — refactor de estructura (review del usuario)
 
 Depende de: Batch 3b.
 
-- [ ] `lib/helpers/retry-backoff.js` → `lib/retry-backoff/` con `index.js` (`RetryBackoff`), `config.js` (`RetryBackoffConfig`, superstruct), `delay.js` (`RetryDelay`), `visibility-changer.js` (`VisibilityChanger`).
-- [ ] Sin `WeakMap`: estado estático plano en `RetryBackoff`. Sin `global-require`. Sin `function` sueltas; constantes como static getters.
-- [ ] `sqs-handler.js`: solo `RetryBackoff.apply(...)` dentro del try/catch; logs y estado se mudan a `RetryBackoff`.
-- [ ] `lib/index.js` exporta `RetryBackoff` desde la ubicación nueva. API pública sin cambios.
-- [ ] Tests reorganizados por archivo; coverage 100 %.
+- [x] `lib/helpers/retry-backoff.js` → `lib/retry-backoff/` con `index.js` (`RetryBackoff`), `config.js` (`RetryBackoffConfig`, superstruct), `delay.js` (`RetryDelay`), `visibility-changer.js` (`VisibilityChanger`).
+- [x] Sin `WeakMap`: estado estático plano en `RetryBackoff`. Sin `global-require`. Sin `function` sueltas; constantes como static getters.
+- [x] `sqs-handler.js`: solo `RetryBackoff.apply(...)` dentro del try/catch; logs y estado se mudan a `RetryBackoff`.
+- [x] `lib/index.js` exporta `RetryBackoff` desde la ubicación nueva. API pública sin cambios.
+- [x] Tests reorganizados por archivo; coverage 100 %.
 
 ## Pendiente de release
 
 - Versión mínima del plugin en el mensaje de error y en el README: placeholder `11.6.0` (minor sobre 11.5.1). Confirmar al releasear el plugin (JCN-557 puede salir antes).
-- `MIN_PLUGIN_VERSION` vive en `lib/sqs-handler.js`, `README.md` y el texto esperado de `tests/sqs-handler.js`.
+- La versión mínima del plugin vive en `RetryBackoff.minPluginVersion` (`lib/retry-backoff/index.js`), `README.md` y los tests.

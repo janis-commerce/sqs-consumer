@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [1.3.0] - 2026-10-06
 ### Added
 - `retryBackoff` consumer getter: opt-in exponential backoff with upward jitter for failed messages, applied through `ChangeMessageVisibilityBatch`. Supports delays up to 12 hours. Requires `sqs:ChangeMessageVisibility`, granted by `sls-helper-plugin-janis` >= 11.6.0
 - `addFailedMessage()` now accepts `{ minDelaySeconds, delaySeconds }` to set a floor or an exact retry delay

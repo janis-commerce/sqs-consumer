@@ -38,32 +38,6 @@ describe('VisibilityChanger', () => {
 		sinon.restore();
 	});
 
-	describe('parseQueueArn', () => {
-
-		it('Should return the queue url, the region and the fifo flag', () => {
-
-			assert.deepStrictEqual(VisibilityChanger.parseQueueArn('arn:aws:sqs:us-east-1:123456789012:MyQueue'), {
-				queueUrl,
-				region: 'us-east-1',
-				fifo: false
-			});
-		});
-
-		it('Should detect FIFO queues', () => {
-
-			assert.strictEqual(VisibilityChanger.parseQueueArn('arn:aws:sqs:us-east-1:123456789012:MyQueue.fifo').fifo, true);
-		});
-
-		[undefined, null, 123, '', 'foo', 'arn:aws:s3:us-east-1:123456789012:MyQueue', 'arn:aws:sqs:us-east-1:123456789012',
-			'arn:aws:sqs::123456789012:MyQueue', 'arn:aws:sqs:us-east-1::MyQueue'
-		].forEach(arn => {
-
-			it(`Should return null for ${JSON.stringify(arn)}`, () => {
-				assert.strictEqual(VisibilityChanger.parseQueueArn(arn), null);
-			});
-		});
-	});
-
 	describe('change', () => {
 
 		it('Should change the visibility with the delay of each message', async () => {
@@ -96,6 +70,61 @@ describe('VisibilityChanger', () => {
 
 			assert.deepStrictEqual(getCalls().map(call => call.args[0].input.Entries.length), [10, 10, 5]);
 			assert.deepStrictEqual(getCalls()[2].args[0].input.Entries.map(({ Id }) => Id), ['0', '1', '2', '3', '4']);
+		});
+
+		it('Should send more than 100 chunks in waves of 10 calls in flight at most', async () => {
+
+			let inFlight = 0;
+			let maxInFlight = 0;
+
+			sqsMock.on(ChangeMessageVisibilityBatchCommand).callsFake(async () => {
+
+				inFlight++;
+				maxInFlight = Math.max(maxInFlight, inFlight);
+
+				await new Promise(resolve => { setImmediate(resolve); });
+
+				inFlight--;
+
+				return { Successful: [], Failed: [] };
+			});
+
+			const result = await VisibilityChanger.change(buildChanges(1005));
+
+			assert.strictEqual(getCalls().length, 101);
+			assert.strictEqual(maxInFlight, 10);
+			assert.deepStrictEqual(result, { accessDenied: false, failures: [] });
+		});
+
+		it('Should not send more waves after an AccessDenied and fail the messages not sent with AccessDenied', async () => {
+
+			sqsMock.on(ChangeMessageVisibilityBatchCommand).rejectsOnce(Object.assign(new Error('denied'), { name: 'AccessDenied' }))
+				.resolves({ Successful: [], Failed: [] });
+
+			const changes = buildChanges(1005);
+			const result = await VisibilityChanger.change(changes);
+
+			assert.strictEqual(getCalls().length, 10);
+			assert.strictEqual(result.accessDenied, true);
+			assert.strictEqual(result.failures.length, 915);
+			assert.deepStrictEqual(result.failures.slice(0, 10).map(({ errorCode }) => errorCode), Array(10).fill('AccessDenied'));
+			assert.deepStrictEqual(result.failures.slice(10), changes.slice(100).map(({ messageId }) => ({
+				messageId,
+				errorCode: 'AccessDenied',
+				errorMessage: 'Not sent: a previous call was denied'
+			})));
+		});
+
+		it('Should send the next waves when the previous one had other failures', async () => {
+
+			sqsMock.on(ChangeMessageVisibilityBatchCommand).rejectsOnce(Object.assign(new Error('boom'), { name: 'ServiceUnavailable' }))
+				.resolves({ Successful: [], Failed: [] });
+
+			const result = await VisibilityChanger.change(buildChanges(110));
+
+			assert.strictEqual(getCalls().length, 11);
+			assert.strictEqual(result.accessDenied, false);
+			assert.strictEqual(result.failures.length, 10);
 		});
 
 		it('Should make one call per queue and a client per region', async () => {

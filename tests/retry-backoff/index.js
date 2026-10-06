@@ -74,7 +74,7 @@ describe('RetryBackoff', () => {
 			assert.strictEqual(RetryBackoff.getRetryDelaySeconds(1, { baseDelaySeconds: 300, jitterRatio: 0 }), 300);
 		});
 
-		[undefined, null, false, {}].forEach(input => {
+		[undefined, null, false, true, {}].forEach(input => {
 
 			it(`Should use the defaults when the config is ${JSON.stringify(input)}`, () => {
 

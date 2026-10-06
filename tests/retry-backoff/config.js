@@ -15,6 +15,11 @@ describe('RetryBackoffConfig', () => {
 			assert.deepStrictEqual(RetryBackoffConfig.normalize({}), { valid: true, config: defaults });
 		});
 
+		it('Should apply the defaults when the config is true', () => {
+
+			assert.deepStrictEqual(RetryBackoffConfig.normalize(true), { valid: true, config: defaults });
+		});
+
 		[undefined, null, false].forEach(input => {
 
 			it(`Should return valid and disabled when the config is ${input}`, () => {
@@ -50,7 +55,6 @@ describe('RetryBackoffConfig', () => {
 		[
 			['not an object', 'foo', 'retryBackoff must be an object'],
 			['an array', [], 'retryBackoff must be an object'],
-			['not an object (true)', true, 'retryBackoff must be an object'],
 			['non numeric base', { baseDelaySeconds: '60' }, 'baseDelaySeconds must be a finite number'],
 			['null base', { baseDelaySeconds: null }, 'baseDelaySeconds must be a finite number'],
 			['non finite max', { maxDelaySeconds: Infinity }, 'maxDelaySeconds must be a finite number'],

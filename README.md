@@ -88,7 +88,7 @@ class MyConsumer extends BatchSQSConsumer {
 }
 ```
 
-Every field is optional and the getter can return `{}`. The default values are the ones of the example. If the getter is not defined, or returns `undefined`, `null` or `false`, the backoff is disabled without logs and nothing changes.
+Every field is optional and the getter can return `{}` or `true`. The default values are the ones of the example. If the getter is not defined, or returns `undefined`, `null` or `false`, the backoff is disabled without logs and nothing changes.
 
 | Field | Default | Description |
 |-------|---------|-------------|

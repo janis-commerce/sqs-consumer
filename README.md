@@ -113,7 +113,8 @@ this.addFailedMessage(record.messageId, { minDelaySeconds: 120 });
 The backoff is applied at the end of the invocation, only to the messages reported with `addFailedMessage()`, and only if the consumer finished without throwing. The failed messages are always returned in `batchItemFailures`, even if their visibility could not be changed (a warning is logged). A summary of the backoff of each invocation is logged.
 
 - **FIFO queues are not supported:** the visibility of their messages is not changed and a warning is logged once per container.
-- **Invalid config:** an error is logged once per container and the backoff is disabled.
+- **Invalid config:** an error is logged once per container and the backoff is disabled. A getter that throws is handled as an invalid config.
+- **Getter evaluation:** the getter is evaluated without session, so it can not depend on the client. It is evaluated only once per container, the first time there are failed messages.
 - **Access denied:** an error is logged once per container and the backoff is disabled in that container.
 
 #### Permissions

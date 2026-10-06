@@ -885,6 +885,44 @@ describe('SQS Handler', () => {
 			sinon.assert.calledOnceWithExactly(logs.error, 'Invalid retryBackoff config, backoff disabled: baseDelaySeconds must be greater than 0');
 		});
 
+		it('Should handle a throwing retryBackoff getter as an invalid config and log a single error', async () => {
+
+			class ThrowingGetterConsumer extends buildConsumer({ failedIds: ['msg-1'] }) {
+
+				get retryBackoff() {
+					return this.session.clientCode;
+				}
+			}
+
+			const expected = { batchItemFailures: [{ itemIdentifier: 'msg-1' }] };
+
+			assert.deepStrictEqual(await SQSHandler.handle(ThrowingGetterConsumer, buildEvent(1)), expected);
+			assert.deepStrictEqual(await SQSHandler.handle(ThrowingGetterConsumer, buildEvent(1)), expected);
+
+			assertSQSNotCalled();
+			sinon.assert.calledOnce(logs.error);
+			sinon.assert.calledWithMatch(logs.error, 'Invalid retryBackoff config, backoff disabled: the retryBackoff getter threw:');
+		});
+
+		it('Should not evaluate the retryBackoff getter if there are no failed messages', async () => {
+
+			const getter = sinon.stub().throws(new Error('Getter error'));
+
+			class ThrowingGetterConsumer extends buildConsumer() {
+
+				get retryBackoff() {
+					return getter();
+				}
+			}
+
+			const response = await SQSHandler.handle(ThrowingGetterConsumer, buildEvent(1));
+
+			assert.strictEqual(response, undefined);
+			sinon.assert.notCalled(getter);
+			sinon.assert.notCalled(logs.error);
+			assertSQSNotCalled();
+		});
+
 		it('Should apply the backoff only to the messages added as failed if the consumer handles records one by one', async () => {
 
 			const Consumer = buildConsumer({ retryBackoff: config, failedIds: ['msg-2'], minDelays: { 'msg-2': 120 }, batch: false });

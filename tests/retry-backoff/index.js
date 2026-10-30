@@ -88,7 +88,7 @@ describe('RetryBackoff', () => {
 			assert.strictEqual(RetryBackoff.getRetryDelaySeconds(1, { jitterRatio: 0 }, 200), 200);
 		});
 
-		it('Should apply the base delay as floor and the jitter upwards', () => {
+		it('Should apply the jitter upwards and ignore a minDelaySeconds lower than the formula', () => {
 
 			sinon.stub(Math, 'random').returns(0.999);
 			assert.strictEqual(RetryBackoff.getRetryDelaySeconds(1, undefined, 10), 72);
@@ -126,6 +126,25 @@ describe('RetryBackoff', () => {
 			const [{ VisibilityTimeout }] = getEntries().Entries;
 
 			assert.strictEqual(RetryBackoff.getRetryDelaySeconds(RetryBackoff.getAttempt(records[0]), { baseDelaySeconds: 300 }), VisibilityTimeout);
+		});
+
+		it('Should apply the jitter of the jitterMode', () => {
+
+			sinon.stub(Math, 'random').returns(0.5);
+			assert.deepStrictEqual([1, 2].map(attempt => RetryBackoff.getRetryDelaySeconds(attempt, { jitterMode: 'equal' })), [45, 90]);
+			assert.deepStrictEqual([1, 2].map(attempt => RetryBackoff.getRetryDelaySeconds(attempt, { jitterMode: 'full' })), [30, 60]);
+
+			Math.random.returns(0);
+			assert.strictEqual(RetryBackoff.getRetryDelaySeconds(1, { jitterMode: 'equal' }), 30);
+			assert.strictEqual(RetryBackoff.getRetryDelaySeconds(1, { jitterMode: 'full' }), 0);
+		});
+
+		it('Should throw an Error with the reason when the jitterMode is invalid', () => {
+
+			assert.throws(
+				() => RetryBackoff.getRetryDelaySeconds(1, { jitterMode: 'random' }),
+				{ message: 'Invalid retryBackoff config: jitterMode must be one of upward, equal, full' }
+			);
 		});
 	});
 

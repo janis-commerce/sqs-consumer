@@ -113,17 +113,28 @@ describe('RetryDelay', () => {
 			assert.strictEqual(RetryDelay.calculate(1, config, { delaySeconds: 100.2 }), 101);
 		});
 
-		[0, -5, 30].forEach(delaySeconds => {
+		it('Should respect an exact delaySeconds lower than baseDelaySeconds', () => {
 
-			it(`Should raise an exact delaySeconds of ${delaySeconds} to baseDelaySeconds`, () => {
+			assert.strictEqual(RetryDelay.calculate(1, config, { delaySeconds: 30 }), 30);
+			assert.strictEqual(RetryDelay.calculate(1, config, { delaySeconds: 10.2 }), 11);
+		});
 
-				assert.strictEqual(RetryDelay.calculate(1, config, { delaySeconds }), 60);
+		it('Should return 0 for an exact delaySeconds of 0', () => {
+
+			assert.strictEqual(RetryDelay.calculate(3, config, { delaySeconds: 0 }), 0);
+		});
+
+		[-5, -0.5].forEach(delaySeconds => {
+
+			it(`Should return 0 for a negative exact delaySeconds of ${delaySeconds}`, () => {
+
+				assert.strictEqual(RetryDelay.calculate(1, config, { delaySeconds }), 0);
 			});
 		});
 
-		it('Should raise a minDelaySeconds lower than baseDelaySeconds to baseDelaySeconds', () => {
+		it('Should not change the formula with a minDelaySeconds lower than it', () => {
 
-			assert.strictEqual(RetryDelay.calculate(1, noJitterConfig, { minDelaySeconds: 10 }), 60);
+			assert.strictEqual(RetryDelay.calculate(2, noJitterConfig, { minDelaySeconds: 100 }), 120);
 		});
 
 		it('Should ignore an invalid delaySeconds and use the formula', () => {
@@ -143,6 +154,74 @@ describe('RetryDelay', () => {
 			const maxConfig = { baseDelaySeconds: 40000, maxDelaySeconds: 43200, jitterRatio: 0 };
 			assert.strictEqual(RetryDelay.calculate(3, maxConfig), 43200);
 			assert.strictEqual(RetryDelay.calculate(1, maxConfig, { delaySeconds: 50000 }), 43200);
+		});
+
+		it('Should apply the equal jitter from half of the nominal delay, ignoring jitterRatio', () => {
+
+			const equalConfig = { ...config, jitterRatio: 0.9, jitterMode: 'equal' };
+
+			sinon.stub(Math, 'random').returns(0);
+			assert.deepStrictEqual([1, 2].map(attempt => RetryDelay.calculate(attempt, equalConfig)), [30, 60]);
+
+			Math.random.returns(0.5);
+			assert.deepStrictEqual([1, 2].map(attempt => RetryDelay.calculate(attempt, equalConfig)), [45, 90]);
+
+			Math.random.returns(0.999);
+			assert.deepStrictEqual([1, 2].map(attempt => RetryDelay.calculate(attempt, equalConfig)), [60, 120]);
+		});
+
+		it('Should apply the full jitter from 0 to the nominal delay, ignoring jitterRatio', () => {
+
+			const fullConfig = { ...config, jitterRatio: 0.9, jitterMode: 'full' };
+
+			sinon.stub(Math, 'random').returns(0);
+			assert.deepStrictEqual([1, 2].map(attempt => RetryDelay.calculate(attempt, fullConfig)), [0, 0]);
+
+			Math.random.returns(0.5);
+			assert.deepStrictEqual([1, 2].map(attempt => RetryDelay.calculate(attempt, fullConfig)), [30, 60]);
+
+			Math.random.returns(0.999);
+			assert.deepStrictEqual([1, 2].map(attempt => RetryDelay.calculate(attempt, fullConfig)), [60, 120]);
+		});
+
+		it('Should apply the jitter upwards when the jitterMode is upward', () => {
+
+			sinon.stub(Math, 'random').returns(0.5);
+			assert.strictEqual(RetryDelay.calculate(2, { ...config, jitterMode: 'upward' }), 132);
+		});
+
+		it('Should floor the equal and full jitter with minDelaySeconds', () => {
+
+			sinon.stub(Math, 'random').returns(0);
+			assert.strictEqual(RetryDelay.calculate(1, { ...config, jitterMode: 'full' }, { minDelaySeconds: 10 }), 10);
+			assert.strictEqual(RetryDelay.calculate(1, { ...config, jitterMode: 'equal' }, { minDelaySeconds: 40 }), 40);
+		});
+
+		it('Should cap the nominal delay before the equal and full jitter, so the retries keep spreading', () => {
+
+			sinon.stub(Math, 'random').returns(0.999);
+			assert.strictEqual(RetryDelay.calculate(5, { ...config, jitterMode: 'equal' }), 900);
+			assert.strictEqual(RetryDelay.calculate(5, { ...config, jitterMode: 'full' }), 900);
+
+			Math.random.returns(0);
+			assert.strictEqual(RetryDelay.calculate(5, { ...config, jitterMode: 'equal' }), 450);
+			assert.strictEqual(RetryDelay.calculate(5, { ...config, jitterMode: 'full' }), 0);
+			assert.strictEqual(RetryDelay.calculate(5, { ...config, jitterMode: 'upward' }), 900);
+
+			Math.random.returns(0.5);
+			assert.strictEqual(RetryDelay.calculate(5, { ...config, jitterMode: 'equal' }), 675);
+			assert.strictEqual(RetryDelay.calculate(5, { ...config, jitterMode: 'full' }), 450);
+		});
+
+		it('Should keep the equal and full jitter when 2 ** n overflows', () => {
+
+			sinon.stub(Math, 'random').returns(0);
+			assert.strictEqual(RetryDelay.calculate(5000, { ...config, jitterMode: 'equal' }), 450);
+			assert.strictEqual(RetryDelay.calculate(5000, { ...config, jitterMode: 'full' }), 0);
+
+			Math.random.returns(0.999);
+			assert.strictEqual(RetryDelay.calculate(5000, { ...config, jitterMode: 'equal' }), 900);
+			assert.strictEqual(RetryDelay.calculate(5000, { ...config, jitterMode: 'full' }), 900);
 		});
 	});
 

@@ -502,7 +502,7 @@ describe('SQS Handler', () => {
 		const OTHER_QUEUE_ARN = 'arn:aws:sqs:us-east-1:000000000000:OtherQueue';
 		const FIFO_QUEUE_ARN = 'arn:aws:sqs:us-east-1:000000000000:FakeQueue.fifo';
 
-		const ACCESS_DENIED_MESSAGE = 'retryBackoff requires sqs:ChangeMessageVisibility: update sls-helper-plugin-janis >= 11.6.0';
+		const ACCESS_DENIED_MESSAGE = 'retryBackoff requires sqs:ChangeMessageVisibility: update sls-helper-plugin-janis >= 11.7.0';
 
 		const config = { baseDelaySeconds: 60, maxDelaySeconds: 900, jitterRatio: 0.2 };
 
@@ -980,22 +980,40 @@ describe('SQS Handler', () => {
 			});
 		});
 
-		it('Should apply the exact delaySeconds without jitter, capped to max and floored to base', async () => {
+		it('Should apply the exact delaySeconds without jitter, capped to max and not floored to base', async () => {
 
 			const Consumer = buildConsumer({
 				retryBackoff: config,
-				failedIds: ['msg-1', 'msg-2', 'msg-3', 'msg-4'],
+				failedIds: ['msg-1', 'msg-2', 'msg-3', 'msg-4', 'msg-5', 'msg-6'],
 				failedOptions: {
 					'msg-1': { delaySeconds: 100, minDelaySeconds: 500 },
 					'msg-2': { delaySeconds: 5000 },
 					'msg-3': { delaySeconds: 0 },
-					'msg-4': { minDelaySeconds: 10 }
+					'msg-4': { delaySeconds: 30 },
+					'msg-5': { delaySeconds: -5 },
+					'msg-6': { minDelaySeconds: 10 }
 				}
 			});
 
-			await SQSHandler.handle(Consumer, buildEvent(4));
+			await SQSHandler.handle(Consumer, buildEvent(6));
 
-			assert.deepStrictEqual(getVisibilityEntries().map(({ VisibilityTimeout }) => VisibilityTimeout), [100, 900, 60, 60]);
+			assert.deepStrictEqual(getVisibilityEntries(), [
+				{ Id: '0', ReceiptHandle: 'handle-1', VisibilityTimeout: 100 },
+				{ Id: '1', ReceiptHandle: 'handle-2', VisibilityTimeout: 900 },
+				{ Id: '2', ReceiptHandle: 'handle-3', VisibilityTimeout: 0 },
+				{ Id: '3', ReceiptHandle: 'handle-4', VisibilityTimeout: 30 },
+				{ Id: '4', ReceiptHandle: 'handle-5', VisibilityTimeout: 0 },
+				{ Id: '5', ReceiptHandle: 'handle-6', VisibilityTimeout: 60 }
+			]);
+
+			sinon.assert.calledOnceWithExactly(logs.info, 'retryBackoff applied', {
+				applied: 6,
+				failures: 0,
+				minAttempt: 1,
+				maxAttempt: 1,
+				minDelay: 0,
+				maxDelay: 900
+			});
 		});
 
 		it('Should use the options of the last addFailedMessage call of a message', async () => {
@@ -1048,6 +1066,50 @@ describe('SQS Handler', () => {
 				sqsMock.commandCalls(ChangeMessageVisibilityBatchCommand).map(({ args: [command] }) => command.input.Entries.length),
 				[1, 1]
 			);
+		});
+
+		it('Should apply the equal jitter of jitterMode and log the summary with its range', async () => {
+
+			Math.random.returns(0.5);
+
+			const event = {
+				Records: [
+					buildRecord(1, { attempt: 1 }),
+					buildRecord(2, { attempt: 2 }),
+					buildRecord(3, { attempt: 3 })
+				]
+			};
+
+			const Consumer = buildConsumer({
+				retryBackoff: { baseDelaySeconds: 30, maxDelaySeconds: 300, jitterMode: 'equal' },
+				failedIds: ['msg-1', 'msg-2', 'msg-3']
+			});
+
+			const response = await SQSHandler.handle(Consumer, event);
+
+			assert.deepStrictEqual(response, {
+				batchItemFailures: [{ itemIdentifier: 'msg-1' }, { itemIdentifier: 'msg-2' }, { itemIdentifier: 'msg-3' }]
+			});
+
+			sinon.assert.calledOnceWithExactly(sqsMock.send, sinon.match.instanceOf(ChangeMessageVisibilityBatchCommand));
+
+			assert.deepStrictEqual(getVisibilityEntries(), [
+				{ Id: '0', ReceiptHandle: 'handle-1', VisibilityTimeout: 23 },
+				{ Id: '1', ReceiptHandle: 'handle-2', VisibilityTimeout: 45 },
+				{ Id: '2', ReceiptHandle: 'handle-3', VisibilityTimeout: 90 }
+			]);
+
+			sinon.assert.calledOnceWithExactly(logs.info, 'retryBackoff applied', {
+				applied: 3,
+				failures: 0,
+				minAttempt: 1,
+				maxAttempt: 3,
+				minDelay: 23,
+				maxDelay: 90
+			});
+
+			sinon.assert.notCalled(logs.warn);
+			sinon.assert.notCalled(logs.error);
 		});
 	});
 

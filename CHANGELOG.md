@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-11-02
+### Added
+- `retryBackoff` option `jitterMode`: `upward` (default, unchanged), `equal` and `full`. Retries keep spreading once the delay reaches `maxDelaySeconds` (https://janiscommerce.atlassian.net/browse/ATR-2725)
+
+### Changed
+- An exact `delaySeconds` in `addFailedMessage()` is applied as is, no longer raised to `baseDelaySeconds`. Use `minDelaySeconds` for a floor (https://janiscommerce.atlassian.net/browse/ATR-2725)
+
+### Fixed
+- The access denied error and the README require `sls-helper-plugin-janis` >= 11.7.0, the first version that grants `sqs:ChangeMessageVisibility` (https://janiscommerce.atlassian.net/browse/ATR-2725)
+
 ## [1.3.0] - 2026-10-06
 ### Added
 - `retryBackoff` consumer getter: opt-in exponential backoff with upward jitter for failed messages, applied through `ChangeMessageVisibilityBatch`. Supports delays up to 12 hours. Requires `sqs:ChangeMessageVisibility`, granted by `sls-helper-plugin-janis` >= 11.6.0

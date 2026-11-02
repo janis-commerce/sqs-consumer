@@ -6,7 +6,9 @@ const RetryBackoffConfig = require('../../lib/retry-backoff/config');
 
 describe('RetryBackoffConfig', () => {
 
-	const defaults = { baseDelaySeconds: 60, maxDelaySeconds: 900, jitterRatio: 0.2 };
+	const defaults = {
+		baseDelaySeconds: 60, maxDelaySeconds: 900, jitterRatio: 0.2, jitterMode: 'upward'
+	};
 
 	describe('normalize', () => {
 
@@ -31,7 +33,9 @@ describe('RetryBackoffConfig', () => {
 
 			assert.deepStrictEqual(RetryBackoffConfig.normalize({ baseDelaySeconds: 10, jitterRatio: 0 }), {
 				valid: true,
-				config: { baseDelaySeconds: 10, maxDelaySeconds: 900, jitterRatio: 0 }
+				config: {
+					baseDelaySeconds: 10, maxDelaySeconds: 900, jitterRatio: 0, jitterMode: 'upward'
+				}
 			});
 		});
 
@@ -64,11 +68,27 @@ describe('RetryBackoffConfig', () => {
 			['base greater than max', { baseDelaySeconds: 1000 }, 'baseDelaySeconds must not be greater than maxDelaySeconds'],
 			['max greater than 43200', { maxDelaySeconds: 43201 }, 'maxDelaySeconds must not be greater than 43200'],
 			['negative jitter', { jitterRatio: -0.1 }, 'jitterRatio must be in the range [0, 1)'],
-			['jitter of 1', { jitterRatio: 1 }, 'jitterRatio must be in the range [0, 1)']
+			['jitter of 1', { jitterRatio: 1 }, 'jitterRatio must be in the range [0, 1)'],
+			['unknown jitterMode', { jitterMode: 'random' }, 'jitterMode must be one of upward, equal, full'],
+			['non string jitterMode', { jitterMode: 1 }, 'jitterMode must be one of upward, equal, full'],
+			['null jitterMode', { jitterMode: null }, 'jitterMode must be one of upward, equal, full']
 		].forEach(([title, input, reason]) => {
 
 			it(`Should return invalid with the reason when the config has ${title}`, () => {
 				assert.deepStrictEqual(RetryBackoffConfig.normalize(input), { valid: false, reason });
+			});
+		});
+
+		['upward', 'equal', 'full'].forEach(jitterMode => {
+
+			it(`Should accept the jitterMode ${jitterMode}`, () => {
+
+				assert.deepStrictEqual(RetryBackoffConfig.normalize({ jitterMode, jitterRatio: 0.5 }), {
+					valid: true,
+					config: {
+						baseDelaySeconds: 60, maxDelaySeconds: 900, jitterRatio: 0.5, jitterMode
+					}
+				});
 			});
 		});
 	});

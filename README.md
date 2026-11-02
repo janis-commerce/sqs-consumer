@@ -78,7 +78,7 @@ By default, a failed message returns to the queue after the fixed visibility tim
 class MyConsumer extends BatchSQSConsumer {
 
 	get retryBackoff() {
-		return { baseDelaySeconds: 60, maxDelaySeconds: 900, jitterRatio: 0.2 };
+		return { baseDelaySeconds: 60, maxDelaySeconds: 900, jitterRatio: 0.2, jitterMode: 'upward' };
 	}
 
 	async processBatch(records) {
@@ -92,17 +92,26 @@ Every field is optional and the getter can return `{}` or `true`. The default va
 
 | Field | Default | Description |
 |-------|---------|-------------|
-| `baseDelaySeconds` | `60` | Delay of the first retry and floor of every delay. Must be greater than 0 and not greater than `maxDelaySeconds` |
+| `baseDelaySeconds` | `60` | Nominal delay of the first retry. Must be greater than 0 and not greater than `maxDelaySeconds` |
 | `maxDelaySeconds` | `900` | Maximum delay. Must not be greater than `43200` (12 hours, the maximum visibility timeout of SQS). See [Long waits](#long-waits-up-to-12-hours) |
-| `jitterRatio` | `0.2` | Random increase of the delay, from `0` to `jitterRatio` of it. Must be in the range `[0, 1)` |
+| `jitterRatio` | `0.2` | Random increase of the delay, from `0` to `jitterRatio` of it. Only used by `jitterMode: 'upward'`, but validated with every mode. Must be in the range `[0, 1)` |
+| `jitterMode` | `'upward'` | How the random jitter is applied to the delay: `'upward'`, `'equal'` or `'full'`. See [Jitter modes](#jitter-modes) |
 
 The delay in seconds of each failed message is calculated as follows:
 
 ```
-delay = min(maxDelaySeconds, max(baseDelaySeconds, ceil(max(minDelaySeconds, baseDelaySeconds × 2^(attempt − 1) × (1 + random × jitterRatio)))))
+N = min(maxDelaySeconds, baseDelaySeconds × 2^(attempt − 1))
+
+upward: jittered = N × (1 + random × jitterRatio)
+equal:  jittered = N / 2 + random × N / 2
+full:   jittered = random × N
+
+delay = min(maxDelaySeconds, ceil(max(minDelaySeconds, jittered)))
 ```
 
-With the defaults:
+The nominal delay `N` is capped before the jitter, so the retries keep spreading once the formula exceeds `maxDelaySeconds`.
+
+With the defaults (`upward`):
 
 | Failed attempt | `60 × 2^(n−1)` | Applied delay (jitter +0–20 %, cap 900) | Accumulated (nominal) |
 |----------------|----------------|------------------------------------------|-----------------------|
@@ -114,17 +123,45 @@ With the defaults:
 | 6+ | ≥ 1920 s | 900 s | +15 min each |
 
 - `attempt` is the `ApproximateReceiveCount` of the message (the first receive is `1`).
-- `baseDelaySeconds` is the floor of every delay: the formula, `minDelaySeconds` and the exact `delaySeconds` are never lower than it.
-- The jitter only increases the delay, so no retry happens before the nominal delay.
-- `minDelaySeconds` is optional (default `0`) and is set with `addFailedMessage(messageId, { minDelaySeconds })`. The delay is at least that value. With `300`, the attempts 1 to 3 wait `300` seconds. If the same message is added more than once, the last `minDelaySeconds` is used.
+- `baseDelaySeconds` is the nominal delay of the first attempt. It is not a floor: with `equal` and `full` a retry can wait less than it.
+- With `upward`, the jitter only increases the delay, so no retry happens before the nominal delay.
+- `minDelaySeconds` is the explicit floor of each message. It is optional (default `0`) and is set with `addFailedMessage(messageId, { minDelaySeconds })`. The delay is at least that value. With `300` and the defaults, the attempts 1 to 3 wait `300` seconds. If the same message is added more than once, the last `minDelaySeconds` is used.
 
 ```js
 this.addFailedMessage(record.messageId, { minDelaySeconds: 120 });
 ```
 
+#### Jitter modes
+
+The jitter spreads the retries of the messages that failed together. `jitterMode` defines its range for the nominal delay `N = min(maxDelaySeconds, baseDelaySeconds × 2^(attempt − 1))`, before rounding up and the cap:
+
+| Mode | Range for a nominal `N` | Uses `jitterRatio` |
+|------|-------------------------|--------------------|
+| `upward` (default) | `[N, N × (1 + jitterRatio))` | Yes |
+| `equal` | `[N / 2, N)` | No, it is ignored (but still validated) |
+| `full` | `[0, N)` | No, it is ignored (but still validated) |
+
+With `baseDelaySeconds: 30`, `maxDelaySeconds: 300` (and `jitterRatio: 0.2` for `upward`), after rounding up, so the upper bound is reachable:
+
+| Failed attempt | Nominal `N` | `upward` | `equal` | `full` |
+|----------------|-------------|----------|---------|--------|
+| 1 | 30 s | 30–36 s | 15–30 s | 0–30 s |
+| 2 | 60 s | 60–72 s | 30–60 s | 0–60 s |
+| 3 | 120 s | 120–144 s | 60–120 s | 0–120 s |
+| 4 | 240 s | 240–288 s | 120–240 s | 0–240 s |
+| 5+ | 300 s (capped) | 300 s | 150–300 s | 0–300 s |
+
+Use `equal` against rate limits (HTTP 429), because it spreads the retries more. Use `upward` when no retry must happen before the nominal delay.
+
+```js
+get retryBackoff() {
+	return { baseDelaySeconds: 30, maxDelaySeconds: 300, jitterMode: 'equal' };
+}
+```
+
 #### Exact delay
 
-If you already calculated the delay of a message, pass it with `delaySeconds`: `addFailedMessage(messageId, { delaySeconds })`. It replaces the formula and `minDelaySeconds` and has no jitter. It is only floored by `baseDelaySeconds` and capped by `maxDelaySeconds`. If the same message is added more than once, the options of the last call are used.
+If you already calculated the delay of a message, pass it with `delaySeconds`: `addFailedMessage(messageId, { delaySeconds })`. It replaces the formula and `minDelaySeconds`, has no jitter and is only capped by `maxDelaySeconds` (and never lower than `0`). A delay lower than `baseDelaySeconds` is applied as is, and `0` returns the message to the queue right away. If you need a minimum, use `minDelaySeconds` instead. If the same message is added more than once, the options of the last call are used.
 
 ```js
 this.addFailedMessage(record.messageId, { delaySeconds: 600 });
@@ -158,7 +195,7 @@ this.addFailedMessage(record.messageId, { delaySeconds });
 ```
 
 - `getAttempt()` returns the `ApproximateReceiveCount` of the record. A missing or invalid count is `1`.
-- `getRetryDelaySeconds()` accepts the same `config` as the getter and completes the missing fields with the defaults. It applies the jitter, the floor of `baseDelaySeconds` and `maxDelaySeconds`, but not the cap of the invocation. Unlike the handler, it throws an `Error` with the reason if the config is invalid.
+- `getRetryDelaySeconds()` accepts the same `config` as the getter and completes the missing fields with the defaults. It applies the jitter of the `jitterMode`, `minDelaySeconds` and the cap of `maxDelaySeconds`, but not a floor of `baseDelaySeconds` nor the cap of the invocation. Unlike the handler, it throws an `Error` with the reason if the config is invalid.
 
 The backoff is applied at the end of the invocation, only to the messages reported with `addFailedMessage()`, and only if the consumer finished without throwing. The failed messages are always returned in `batchItemFailures`, even if their visibility could not be changed (a warning is logged). A summary of the backoff of each invocation is logged.
 
@@ -167,9 +204,41 @@ The backoff is applied at the end of the invocation, only to the messages report
 - **Getter evaluation:** the getter is evaluated without session, so it can not depend on the client. It is evaluated only once per container, the first time there are failed messages.
 - **Access denied:** an error is logged once per container and the backoff is disabled in that container.
 
+> **Warning**
+>
+> **Postpone with `addFailedMessage()` and return, do not throw.** If `processBatch()` or `processSingleRecord()` throws, the handler propagates the error and no backoff is applied. With an `IterativeSQSConsumer`, the `Promise.all` of the records rejects the whole batch: the records that succeeded are retried too, and the backoff of the records that already called `addFailedMessage()` is lost.
+>
+> This is the usual case when migrating a consumer that changes the visibility of its messages on its own. Before:
+>
+> ```js
+> async processSingleRecord(record) {
+> 	try {
+> 		await this.process(record.body);
+> 	} catch(error) {
+> 		const delaySeconds = this.getDelaySeconds(error);
+> 		await sqsClient.send(new ChangeMessageVisibilityCommand({ QueueUrl, ReceiptHandle: record.receiptHandle, VisibilityTimeout: delaySeconds }));
+> 		throw error;
+> 	}
+> }
+> ```
+>
+> After:
+>
+> ```js
+> async processSingleRecord(record) {
+> 	try {
+> 		await this.process(record.body);
+> 	} catch(error) {
+> 		const delaySeconds = this.getDelaySeconds(error);
+> 		this.addFailedMessage(record.messageId, { delaySeconds });
+> 		return;
+> 	}
+> }
+> ```
+
 #### Permissions
 
-The lambda needs the `sqs:ChangeMessageVisibility` permission on the queue it consumes. It is granted by default by `sls-helper-plugin-janis >= 11.6.0`. With an older version, add an `iamStatement` with that action.
+The lambda needs the `sqs:ChangeMessageVisibility` permission on the queue it consumes. It is granted by default by `sls-helper-plugin-janis >= 11.7.0`. With an older version, add an `iamStatement` with that action.
 
 ## :zap: Usage with serverless (lambda)
 
